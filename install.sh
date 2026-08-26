@@ -1,15 +1,31 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════════════════════
-# idontPG-backup — One-command Installer
-# Developer / Maintainer: durwinam
-# GitHub: https://github.com/durwinam/idontPG-backup
-# Version: v5.4.2
+#  idontPG-backup — One-command Installer
+# ══════════════════════════════════════════════════════════════════════════════
+#  Developer  : durwinam
+#  Maintainer : durwinam
+#  GitHub     : https://github.com/durwinam/idontPG-backup
+#  License    : MIT
+#
+#  Installs:
+#    - idontPG-backup CLI
+#    - idont-backup alias
+#    - Web Panel
+#    - Web Panel Scheduler
+#
+#  The installed CLI supports:
+#      idont-backup
+#      idont-backup --set
+#      idont-backup update
+#
+#  Web Panel:
+#      http://SERVER_IP:5000
 # ══════════════════════════════════════════════════════════════════════════════
 
-set -Eeuo pipefail
+set -e
 
 RED='\e[1;31m'
-GREEN='\e[1;32m'
+GREEN='\e[2;32m'
 YELLOW='\e[1;33m'
 NC='\e[0m'
 
@@ -17,61 +33,65 @@ REPO="durwinam/idontPG-backup"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}"
 
 INSTALL_PATH="/usr/local/bin/idontPG-backup"
-CLI_ALIAS="/usr/local/bin/idont-backup"
+ALIAS_PATH="/usr/local/bin/idont-backup"
+TMP_PATH="/tmp/pg_backup.py"
 
 WEB_PANEL_PATH="/usr/local/bin/idontPG-backup-web.py"
+WEB_TMP="/tmp/idontpg-web-panel.py"
+
 WEB_ASSET_DIR="/usr/local/share/idontPG-backup"
 WEB_LOGO_PATH="${WEB_ASSET_DIR}/logo.png"
 
-WEB_PORT="${IDONTPG_PORT:-5000}"
+WEB_PANEL_URL="${RAW_BASE}/main/web_panel.py"
+WEB_LOGO_URL="${RAW_BASE}/main/web/static/logo.png"
+
 DEVELOPER="durwinam"
 
-TMP_PATH="$(mktemp /tmp/idontpg-backup.XXXXXX.py)"
-WEB_TMP="$(mktemp /tmp/idontpg-web.XXXXXX.py)"
-
-cleanup() {
-    rm -f "${TMP_PATH}" "${WEB_TMP}" "${TMP_PATH}.new" 2>/dev/null || true
-}
-trap cleanup EXIT
-
 VERSION_TAG="${1:-}"
-OFFLINE=0
 
-for arg in "$@"; do
-    [ "${arg}" = "--offline" ] && OFFLINE=1
-done
-
-# ── Version validation ───────────────────────────────────────────────────────
-
-if [ -n "${VERSION_TAG}" ] && [ "${VERSION_TAG}" = "--offline" ]; then
-    VERSION_TAG=""
-fi
-
-if [ -n "${VERSION_TAG}" ] && \
-   [[ ! "${VERSION_TAG}" =~ ^[vV]?[0-9]+(\.[0-9]+){1,2}$ ]]; then
-
-    echo -e "${RED}[-] Invalid version: ${VERSION_TAG}${NC}"
-    echo "    Example:"
-    echo "    bash install.sh 5.4.2"
-    exit 1
-fi
-
-if [ -n "${VERSION_TAG}" ] && [[ ! "${VERSION_TAG}" =~ ^v ]]; then
-    VERSION_TAG="v${VERSION_TAG}"
-fi
-
-# ── Root check ───────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Root check
+# ──────────────────────────────────────────────────────────────────────────────
 
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "${RED}[-] Please run this installer as root.${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}[*] Installing idontPG-backup...${NC}"
+echo
+echo -e "${GREEN}╔════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║             idontPG-backup Installer               ║${NC}"
+echo -e "${GREEN}║                    durwinam                         ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════╝${NC}"
+echo
 
-# ── Dependencies ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Version argument
+#
+# Examples:
+#   bash install.sh
+#   bash install.sh 5.4.2
+#   bash install.sh v5.4.2
+# ──────────────────────────────────────────────────────────────────────────────
+
+if [ -z "${VERSION_TAG}" ] && [[ "${0}" =~ ^[vV]?[0-9]+(\.[0-9]+){1,2}$ ]]; then
+    VERSION_TAG="${0}"
+fi
+
+if [ -n "${VERSION_TAG}" ]; then
+    VERSION_TAG="${VERSION_TAG#v}"
+    VERSION_TAG="${VERSION_TAG#V}"
+    VERSION_TAG="v${VERSION_TAG}"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Install system packages
+# ──────────────────────────────────────────────────────────────────────────────
+
+echo -e "${GREEN}[*] Checking system packages...${NC}"
 
 if command -v apt-get >/dev/null 2>&1; then
+
     apt-get update -y >/dev/null 2>&1 || true
 
     apt-get install -y \
@@ -79,166 +99,193 @@ if command -v apt-get >/dev/null 2>&1; then
         python3-pip \
         curl \
         unzip \
+        ca-certificates \
         >/dev/null 2>&1 || true
+
 fi
 
-python3 -m pip install \
+# ──────────────────────────────────────────────────────────────────────────────
+# Python dependencies
+# ──────────────────────────────────────────────────────────────────────────────
+
+echo -e "${GREEN}[*] Installing Python dependencies...${NC}"
+
+pip3 install \
     --break-system-packages \
-    requests urllib3 paramiko \
+    requests \
+    urllib3 \
+    paramiko \
+    pysocks \
     >/dev/null 2>&1 || \
-python3 -m pip install \
-    requests urllib3 paramiko \
+pip3 install \
+    requests \
+    urllib3 \
+    paramiko \
+    pysocks \
     >/dev/null 2>&1 || true
 
-# ── Select source ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Download CLI
+# ──────────────────────────────────────────────────────────────────────────────
+
+echo -e "${GREEN}[*] Downloading idontPG-backup...${NC}"
 
 if [ -n "${VERSION_TAG}" ]; then
 
-    REF="${VERSION_TAG}"
+    SOURCE="${RAW_BASE}/${VERSION_TAG}/pg_backup.py"
 
-    echo -e "${GREEN}[*] Source: pinned version ${REF}${NC}"
-
-elif [ "${OFFLINE}" -eq 1 ]; then
-
-    LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-    if [ ! -f "${LOCAL_DIR}/pg_backup.py" ]; then
-        echo -e "${RED}[-] --offline was specified but pg_backup.py was not found.${NC}"
-        exit 1
-    fi
-
-    cp "${LOCAL_DIR}/pg_backup.py" "${TMP_PATH}"
-
-    REF=""
-
-    echo -e "${GREEN}[*] Source: local offline copy${NC}"
+    echo -e "${GREEN}[*] Source: ${VERSION_TAG}${NC}"
 
 else
 
-    REF="main"
+    SOURCE="${RAW_BASE}/main/pg_backup.py?cache=$(date +%s)"
 
-    echo -e "${GREEN}[*] Source: GitHub main branch${NC}"
+    echo -e "${GREEN}[*] Source: latest main branch${NC}"
 
 fi
 
-# ── Download pg_backup.py ────────────────────────────────────────────────────
+rm -f "${TMP_PATH}"
 
-if [ -n "${REF}" ]; then
+if ! curl \
+    --fail \
+    --silent \
+    --show-error \
+    --location \
+    --retry 3 \
+    --connect-timeout 15 \
+    "${SOURCE}" \
+    -o "${TMP_PATH}"; then
 
-    SOURCE="${RAW_BASE}/${REF}/pg_backup.py?cachebust=$(date +%s)"
-
-    if ! curl -fsSL \
-        --retry 3 \
-        --connect-timeout 15 \
-        "${SOURCE}" \
-        -o "${TMP_PATH}"; then
-
-        echo -e "${RED}[-] Failed to download pg_backup.py${NC}"
-        echo "    ${SOURCE}"
-        exit 1
-    fi
-
+    echo -e "${RED}[-] Failed to download pg_backup.py${NC}"
+    echo -e "${RED}[-] URL: ${SOURCE}${NC}"
+    exit 1
 fi
 
 if [ ! -s "${TMP_PATH}" ]; then
-    echo -e "${RED}[-] pg_backup.py is empty or missing.${NC}"
+    echo -e "${RED}[-] Downloaded pg_backup.py is empty.${NC}"
     exit 1
 fi
 
-# ── Basic validation ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Validate Python before installation
+# ──────────────────────────────────────────────────────────────────────────────
 
-if ! head -n 30 "${TMP_PATH}" | grep -Eq \
-    'python|idontPG-backup|pg_backup'; then
+echo -e "${GREEN}[*] Validating CLI Python file...${NC}"
 
-    echo -e "${RED}[-] Downloaded pg_backup.py does not look valid.${NC}"
+if ! python3 -m py_compile "${TMP_PATH}" >/dev/null 2>&1; then
+
+    echo -e "${RED}[-] pg_backup.py failed Python syntax validation.${NC}"
+    echo -e "${RED}[-] Installation aborted. Existing installation was not replaced.${NC}"
+
+    rm -f "${TMP_PATH}"
     exit 1
 fi
 
-# ── Restore Python shebang ───────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Read installed version
+# ──────────────────────────────────────────────────────────────────────────────
+
+INSTALLED_VERSION="unknown"
+
+INSTALLED_VERSION=$(
+    grep -m1 -oE \
+    'v[0-9]+\.[0-9]+(\.[0-9]+)?' \
+    "${TMP_PATH}" 2>/dev/null \
+    | head -1 \
+    | sed 's/^v//'
+) || true
+
+if [ -z "${INSTALLED_VERSION}" ]; then
+    INSTALLED_VERSION="unknown"
+fi
+
+echo -e "${GREEN}[+] CLI version: v${INSTALLED_VERSION}${NC}"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Install CLI
+# ──────────────────────────────────────────────────────────────────────────────
 
 if ! head -n 1 "${TMP_PATH}" | grep -q "python"; then
 
     {
         echo '#!/usr/bin/env python3'
         cat "${TMP_PATH}"
-    } > "${TMP_PATH}.new"
+    } > "${TMP_PATH}.fixed"
 
-    mv "${TMP_PATH}.new" "${TMP_PATH}"
+    mv "${TMP_PATH}.fixed" "${TMP_PATH}"
+
 fi
 
-# ── Python syntax check ──────────────────────────────────────────────────────
+install -m 700 "${TMP_PATH}" "${INSTALL_PATH}"
 
-if ! python3 -m py_compile "${TMP_PATH}"; then
+rm -f "${TMP_PATH}"
 
-    echo -e "${RED}[-] Python syntax check failed.${NC}"
-    echo -e "${RED}[-] Existing installation was NOT replaced.${NC}"
-    exit 1
-fi
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI alias
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ── Detect version ───────────────────────────────────────────────────────────
+ln -sfn "${INSTALL_PATH}" "${ALIAS_PATH}"
 
-INSTALLED_VERSION="$(
-    grep -m1 -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' \
-        "${TMP_PATH}" 2>/dev/null \
-        | head -1 \
-        | sed 's/^v//' || true
-)"
+chmod 700 "${INSTALL_PATH}"
+chmod 700 "${ALIAS_PATH}"
 
-if [ -z "${INSTALLED_VERSION}" ]; then
-    INSTALLED_VERSION="unknown"
-fi
+echo -e "${GREEN}[+] CLI installed:${NC} ${INSTALL_PATH}"
+echo -e "${GREEN}[+] Command:${NC} idont-backup"
+echo -e "${GREEN}[+] Update command:${NC} idont-backup update"
+echo -e "${GREEN}[+] Settings command:${NC} idont-backup --set"
 
-echo -e "${GREEN}[+] Detected version: v${INSTALLED_VERSION}${NC}"
-
-# ── Install CLI atomically ───────────────────────────────────────────────────
-
-install -m 700 \
-    "${TMP_PATH}" \
-    "${INSTALL_PATH}"
-
-ln -sfn \
-    "${INSTALL_PATH}" \
-    "${CLI_ALIAS}"
-
-echo -e "${GREEN}[+] Installed: ${INSTALL_PATH}${NC}"
-echo -e "${GREEN}[+] CLI command: idont-backup${NC}"
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
 # Web Panel
-# ══════════════════════════════════════════════════════════════════════════════
-
-WEB_REF="${REF:-main}"
+# ──────────────────────────────────────────────────────────────────────────────
 
 echo
 echo -e "${GREEN}[*] Installing Web Panel...${NC}"
-echo -e "${GREEN}[*] Web Panel source: ${WEB_REF}${NC}"
 
-WEB_PANEL_URL="${RAW_BASE}/${WEB_REF}/web_panel.py"
-WEB_LOGO_URL="${RAW_BASE}/${WEB_REF}/web/static/logo.png"
+rm -f "${WEB_TMP}"
 
-if curl -fsSL \
+if curl \
+    --fail \
+    --silent \
+    --show-error \
+    --location \
     --retry 3 \
     --connect-timeout 15 \
-    "${WEB_PANEL_URL}?cachebust=$(date +%s)" \
-    -o "${WEB_TMP}" && \
-    [ -s "${WEB_TMP}" ]; then
+    "${WEB_PANEL_URL}?cache=$(date +%s)" \
+    -o "${WEB_TMP}" \
+    && [ -s "${WEB_TMP}" ]; then
 
-    # Validate web panel before replacing the current one.
+    # Validate Web Panel Python
+    if ! python3 -m py_compile "${WEB_TMP}" >/dev/null 2>&1; then
 
-    if python3 -m py_compile "${WEB_TMP}"; then
+        echo -e "${RED}[!] Web Panel Python validation failed.${NC}"
+        echo -e "${YELLOW}[!] CLI installation remains intact.${NC}"
 
-        install -m 700 \
-            "${WEB_TMP}" \
-            "${WEB_PANEL_PATH}"
+        rm -f "${WEB_TMP}"
+
+    else
+
+        install -m 700 "${WEB_TMP}" "${WEB_PANEL_PATH}"
+
+        rm -f "${WEB_TMP}"
 
         mkdir -p "${WEB_ASSET_DIR}"
 
-        if curl -fsSL \
+        chmod 755 "${WEB_ASSET_DIR}"
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Download logo
+        # ──────────────────────────────────────────────────────────────────────
+
+        if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
             --retry 3 \
             --connect-timeout 15 \
-            "${WEB_LOGO_URL}?cachebust=$(date +%s)" \
-            -o "${WEB_LOGO_PATH}" && \
-            [ -s "${WEB_LOGO_PATH}" ]; then
+            "${WEB_LOGO_URL}?cache=$(date +%s)" \
+            -o "${WEB_LOGO_PATH}" \
+            && [ -s "${WEB_LOGO_PATH}" ]; then
 
             chmod 644 "${WEB_LOGO_PATH}"
 
@@ -248,11 +295,13 @@ if curl -fsSL \
 
             rm -f "${WEB_LOGO_PATH}"
 
-            echo -e "${YELLOW}[!] Logo download failed.${NC}"
+            echo -e "${YELLOW}[!] Logo download failed. Web Panel will use fallback branding.${NC}"
 
         fi
 
-        # ── Web Panel service ────────────────────────────────────────────────
+        # ──────────────────────────────────────────────────────────────────────
+        # Web Panel service
+        # ──────────────────────────────────────────────────────────────────────
 
         cat > /etc/systemd/system/idontpg-backup-web.service <<EOF
 [Unit]
@@ -266,17 +315,20 @@ ExecStart=/usr/bin/python3 ${WEB_PANEL_PATH}
 Restart=always
 RestartSec=3
 User=root
-Environment=IDONTPG_PORT=${WEB_PORT}
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-        # ── Automatic Backup Scheduler ──────────────────────────────────────
+        chmod 600 /etc/systemd/system/idontpg-backup-web.service
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Web Scheduler service
+        # ──────────────────────────────────────────────────────────────────────
 
         cat > /etc/systemd/system/idontpg-backup-web-scheduler.service <<EOF
 [Unit]
-Description=idontPG-backup Automatic Web Scheduler
+Description=idontPG-backup Web Scheduler
 After=network-online.target docker.service idontpg-backup-web.service
 Wants=network-online.target
 
@@ -286,58 +338,115 @@ ExecStart=/usr/bin/python3 ${WEB_PANEL_PATH} --worker
 Restart=always
 RestartSec=15
 User=root
-Environment=IDONTPG_PORT=${WEB_PORT}
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+        chmod 600 /etc/systemd/system/idontpg-backup-web-scheduler.service
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Reload systemd
+        # ──────────────────────────────────────────────────────────────────────
+
+        echo -e "${GREEN}[*] Reloading systemd...${NC}"
+
         systemctl daemon-reload
 
+        # ──────────────────────────────────────────────────────────────────────
         # IMPORTANT:
-        # Both the web panel and scheduler are enabled permanently
-        # and started immediately.
+        # Enable AND start BOTH services.
+        #
+        # Previous installer only enabled the Web Panel.
+        # This version also enables the Scheduler Worker.
+        # ──────────────────────────────────────────────────────────────────────
 
-        systemctl enable idontpg-backup-web.service >/dev/null 2>&1 || true
-        systemctl enable idontpg-backup-web-scheduler.service >/dev/null 2>&1 || true
+        echo -e "${GREEN}[*] Starting Web Panel...${NC}"
 
-        systemctl restart idontpg-backup-web.service
-        systemctl restart idontpg-backup-web-scheduler.service
+        if systemctl enable --now idontpg-backup-web.service >/dev/null 2>&1; then
+            echo -e "${GREEN}[+] Web Panel is running.${NC}"
+        else
+            echo -e "${RED}[!] Web Panel failed to start.${NC}"
+            systemctl status idontpg-backup-web.service --no-pager || true
+        fi
 
-        echo -e "${GREEN}[+] Web Panel installed.${NC}"
-        echo -e "${GREEN}[+] Web Panel: http://SERVER_IP:${WEB_PORT}${NC}"
-        echo -e "${GREEN}[+] Automatic Scheduler: ENABLED${NC}"
-        echo -e "${GREEN}[+] Automatic Scheduler: RUNNING${NC}"
+        echo -e "${GREEN}[*] Starting Web Scheduler...${NC}"
 
-    else
+        if systemctl enable --now idontpg-backup-web-scheduler.service >/dev/null 2>&1; then
+            echo -e "${GREEN}[+] Web Scheduler is running.${NC}"
+        else
+            echo -e "${RED}[!] Web Scheduler failed to start.${NC}"
+            systemctl status idontpg-backup-web-scheduler.service --no-pager || true
+        fi
 
-        echo -e "${RED}[!] Web Panel syntax check failed.${NC}"
-        echo -e "${YELLOW}[!] Existing Web Panel was kept.${NC}"
+        echo
+        echo -e "${GREEN}[+] Web Panel:${NC} http://SERVER_IP:5000"
 
     fi
 
 else
 
+    rm -f "${WEB_TMP}"
+
     echo -e "${YELLOW}[!] Web Panel download failed.${NC}"
-    echo -e "${YELLOW}[!] CLI backup remains installed.${NC}"
+    echo -e "${YELLOW}[!] CLI installation remains available.${NC}"
 
 fi
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Final status
-# ══════════════════════════════════════════════════════════════════════════════
+# ──────────────────────────────────────────────────────────────────────────────
+# Final verification
+# ──────────────────────────────────────────────────────────────────────────────
 
 echo
-echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}        idontPG-backup Installation Completed${NC}"
-echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN} Version     : v${INSTALLED_VERSION}${NC}"
-echo -e "${GREEN} Developer   : ${DEVELOPER}${NC}"
-echo -e "${GREEN} CLI         : idont-backup${NC}"
-echo -e "${GREEN} Web Panel   : http://SERVER_IP:${WEB_PORT}${NC}"
-echo -e "${GREEN} Scheduler   : systemd / automatic${NC}"
-echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}[*] Running final checks...${NC}"
+
+if [ -x "${INSTALL_PATH}" ]; then
+    echo -e "${GREEN}[✓] CLI: OK${NC}"
+else
+    echo -e "${RED}[✗] CLI: FAILED${NC}"
+fi
+
+if [ -x "${WEB_PANEL_PATH}" ]; then
+    echo -e "${GREEN}[✓] Web Panel file: OK${NC}"
+else
+    echo -e "${YELLOW}[!] Web Panel file: not installed${NC}"
+fi
+
+if systemctl is-active --quiet idontpg-backup-web.service; then
+    echo -e "${GREEN}[✓] Web Panel service: RUNNING${NC}"
+else
+    echo -e "${YELLOW}[!] Web Panel service: NOT RUNNING${NC}"
+fi
+
+if systemctl is-active --quiet idontpg-backup-web-scheduler.service; then
+    echo -e "${GREEN}[✓] Web Scheduler: RUNNING${NC}"
+else
+    echo -e "${YELLOW}[!] Web Scheduler: NOT RUNNING${NC}"
+fi
+
+echo
+echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN} Installation completed successfully.${NC}"
+echo -e "${GREEN}════════════════════════════════════════════════════${NC}"
+echo
+echo -e "  CLI:"
+echo -e "    ${GREEN}idont-backup${NC}"
+echo
+echo -e "  Settings:"
+echo -e "    ${GREEN}idont-backup --set${NC}"
+echo
+echo -e "  Update:"
+echo -e "    ${GREEN}idont-backup update${NC}"
+echo
+echo -e "  Web Panel:"
+echo -e "    ${GREEN}http://SERVER_IP:5000${NC}"
+echo
+echo -e "  Web Scheduler:"
+echo -e "    ${GREEN}systemctl status idontpg-backup-web-scheduler${NC}"
+echo
+echo -e "${GREEN}Developer: durwinam${NC}"
+echo
+echo -e "${YELLOW}[*] Launching idontPG-backup...${NC}"
 echo
 
-# Start CLI normally after installation.
 exec "${INSTALL_PATH}"
