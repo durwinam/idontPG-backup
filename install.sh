@@ -25,8 +25,8 @@ DEVELOPER="durwinam"
 VERSION_TAG="${1:-}"   # optional: pass a tag (e.g. v4.2.1 or 4.2.1) to pin that version
 
 # Accept version from both forms:
-#   bash install.sh 4.2.1        -> $1 = 4.2.1
-#   bash -c "$(curl ...)" 4.2.1  -> $0 = 4.2.1 (bash -c name slot)
+#   bash install.sh 5.4.2        -> $1 = 5.4.2
+#   bash -c "$(curl ...)" 5.4.2  -> $0 = 5.4.2 (bash -c name slot)
 #   bash install.sh              -> VERSION_TAG stays empty (latest from main)
 if [ -z "${VERSION_TAG}" ] && [[ "${0}" =~ ^[vV]?[0-9]+(\.[0-9]+){1,2}$ ]]; then
   VERSION_TAG="${0}"
@@ -55,7 +55,7 @@ pip3 install --break-system-packages requests urllib3 paramiko >/dev/null 2>&1 |
 pip3 install requests urllib3 paramiko >/dev/null 2>&1 || true
 
 # ── Pick source: pinned tag, explicit local offline copy, or main branch ─────
-# v4.2.5 fix: the previous version silently reused ANY pg_backup.py sitting
+# v5.4.2 fix: the previous version silently reused ANY pg_backup.py sitting
 # in the current working directory when no version tag was given — including
 # when the installer was run via `bash -c "$(curl ...)"` from README, where
 # $0 is literally "bash" and `dirname "$0"` resolves to ".". If a user
