@@ -4,19 +4,6 @@
 
 ### Professional Backup, Restore & Migration Utility for PasarGuard & PG-Node
 
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=20&pause=1000&color=8B0000&center=true&vCenter=true&width=500&lines=Sharingan-sharp+Backups;Silent+Migration%2C+Zero+Downtime;All+5+Backends+Auto--Detected;Hardened+%26+Security--Audited" alt="Typing SVG" />
-
-![Version](https://img.shields.io/badge/Version-v5.2.0-8B0000)
-![Python](https://img.shields.io/badge/Python-3.8+-8B0000)
-![Platform](https://img.shields.io/badge/Platform-Linux-8B0000)
-![Docker](https://img.shields.io/badge/Docker-Supported-8B0000)
-![SQLite](https://img.shields.io/badge/SQLite-Supported-8B0000)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supported-8B0000)
-![TimescaleDB](https://img.shields.io/badge/TimescaleDB-Supported-8B0000)
-![MySQL](https://img.shields.io/badge/MySQL-Supported-8B0000)
-![MariaDB](https://img.shields.io/badge/MariaDB-Supported-8B0000)
-![Multi-DB](https://img.shields.io/badge/Multi--Database-Auto--Detected-8B0000)
-
 Backup • Restore • Migration • Telegram Automation • All 5 Backends • Docker
 
 </div>
@@ -25,7 +12,7 @@ Backup • Restore • Migration • Telegram Automation • All 5 Backends • 
 
 <div dir="rtl" align="center">
 
-[معرفی](#-معرفی) • [قابلیت‌ها](#-قابلیت‌ها) • [بک‌اندها](#️-بک‌اندهای-دیتابیس-پشتیبانی‌شده) • [نصب](#-نصب-و-اجرا) • [انتقال به سرور جدید](#-انتقال-به-سرور-جدید) • [بکاپ تلگرام](#-بکاپ-خودکار-تلگرام) • [تغییرات نسخه](#-تغییرات-نسخه) • [امنیت](#-امنیت-security)
+[معرفی](#-معرفی) • [قابلیت‌ها](#-قابلیت‌ها)  • [نصب](#-نصب-و-اجرا) • [انتقال به سرور جدید](#-انتقال-به-سرور-جدید) • [بکاپ تلگرام](#-بکاپ-خودکار-تلگرام) • [امنیت](#-امنیت-security)
 
 </div>
 
@@ -37,25 +24,18 @@ Backup • Restore • Migration • Telegram Automation • All 5 Backends • 
 
 **idontPG-backup** یک ابزار حرفه‌ای برای تهیه نسخه پشتیبان، ریستور و مهاجرت سرویس‌های **PasarGuard** و **PG-Node** است — با تشخیص خودکار بک‌اند، انتقال کامل بین سرورها، ارسال خودکار به تلگرام و بازیابی سریع.
 
-> 🆕 **v5.2.0** — رفع کامل خانواده‌ی خطای `manifest.tsv not found` در مهاجرت به سرور جدید (بررسی محلی آرشیو *قبل* از آپلود و پاک‌شدن سرور مقصد) + رفع ریشه‌ای خطای `1045 Access denied` روی MySQL/MariaDB (تشخیص و پاک‌سازی صحیح bind mount در برابر named volume، پیش از init مجدد). جزئیات در [📜 تغییرات نسخه](#-تغییرات-نسخه) و [🔐 امنیت](#-امنیت-security).
-
----
-
-# ✨ قابلیت‌ها
-
 * 📦 بکاپ PasarGuard تنها یا PasarGuard + PG-Node
 * 🗄️ بکاپ و ریستور **همه‌ی دیتابیس‌های پاسارگارد** (Multi-Database)
 * 🎯 **تشخیص خودکار بک‌اند** دیتابیس — بدون سؤال از کاربر
 * 🚀 انتقال مستقیم و کامل به سرور جدید (Zero-Downtime Migration)
-* 🔄 ریستور کامل از فایل ZIP محلی
 * 🤖 ارسال خودکار بکاپ به تلگرام + تقسیم خودکار فایل‌های حجیم (>50MB)
 * ⏰ بکاپ زمان‌بندی‌شده با چند شِدیولر هم‌زمان (screen / tmux / systemd)
 * 🐳 مدیریت خودکار Docker Stack + نصب خودکار وابستگی‌ها
 * 🔐 انتقال امن از طریق SSH با رمز `getpass` (بدون echo)
 * 🛡️ سخت‌گیری امنیتی کامل: بدون command injection، بدون Zip-Slip، بدون credential leak
-* ✅ **بررسی سلامت آرشیو پیش از هر عملیات مخرب** (v5.2.0) — یک بکاپ ناقص هرگز باعث پاک‌شدن سرور مقصد یا نصب فعلی نمی‌شود
-
----
+* ✅ **بررسی سلامت آرشیو پیش از هر عملیات مخرب** (v5.4.0)
+  — یک بکاپ ناقص هرگز باعث پاک‌شدن سرور مقصد یا نصب فعلی نمی‌شود
+--
 
 # 🗄️ بک‌اندهای دیتابیس پشتیبانی‌شده
 
@@ -301,7 +281,7 @@ Download install.sh + install.sh.sha256   →   tmp dir خصوصی (0700)
 
 # 📞 ارتباط با توسعه‌دهنده
 
-* 👨‍💻 Telegram: https://t.me/durwinam
+* 👨‍💻 Telegram: https://t.me/DuRnaziiAy
 * 🐙 GitHub: https://github.com/durwinam
 
 ---
