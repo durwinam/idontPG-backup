@@ -8,7 +8,9 @@
 
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
-
+<div align="center">
+  <img src="idontPG-img.png" alt="idontPG-backup Logo" width="420">
+</div>
 <br>
 
 [![Version](https://img.shields.io/badge/version-v5.4.2-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
