@@ -3604,118 +3604,201 @@ def _update_scheduler_credentials(kind, name):
     _restart_scheduler_instance(kind, name)
 
 # ── Workflow 6: Update to latest version ──────────────────────
-# v4.2.1 — replaced `curl | sudo bash` with a download-then-verify-then-run
-# flow: save install.sh to a 0700 temp file (no execution yet), download the
-# publisher's install.sh.sha256 if available, abort on SHA256 mismatch, and
-# only then exec the saved file with sudo bash. This blunts the most
-# catastrophic class of bug in the previous pattern: a compromised
-# raw.githubusercontent.com payload no longer gets piped straight into a
-# root shell the instant the user types "y".
-UPDATE_URL_BASE   = "https://raw.githubusercontent.com/CIAUB/PG-Backup/main"
-UPDATE_SCRIPT_URL = f"{UPDATE_URL_BASE}/install.sh"
-UPDATE_HASH_URL   = f"{UPDATE_URL_BASE}/install.sh.sha256"
+# v5.4.2 — direct self-update for idontPG-backup.
+# `idont-backup update` updates BOTH the CLI and the Web Panel from the
+# durwinam/idontPG-backup main branch. Existing credentials, scheduler
+# metadata, PasarGuard data and backup archives are deliberately untouched.
+UPDATE_REPO_RAW = "https://raw.githubusercontent.com/durwinam/idontPG-backup/main"
+UPDATE_FILES = {
+    "pg_backup.py": "/usr/local/bin/idontPG-backup",
+    "web_panel.py": "/usr/local/bin/idontPG-backup-web.py",
+    "logo.png": "/usr/local/share/idontPG-backup/logo.png",
+}
 
-def _download_to(url, dest, timeout=30):
-    """Download `url` to `dest` (a filesystem path). Returns True on
-    success, False on any failure (with a human-readable error already
-    printed)."""
+
+def _download_update_file(url, dest, timeout=45):
+    """Download one update asset to a private temporary path."""
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "idontPG-backup-updater/5.4.2"},
+        )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
-    except Exception as e:
-        print_error(f"Could not download {url}: {e}")
-        return False
-    try:
+        if not data:
+            raise ValueError("empty response")
         fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+        return True
     except Exception as e:
-        print_error(f"Could not save {dest}: {e}")
+        print_error(f"Download failed: {url} ({e})")
+        try:
+            os.unlink(dest)
+        except OSError:
+            pass
         return False
-    return True
 
-def _sha256_of(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(64 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
-def workflow_update():
-    print_header("Update PG-Backup to Latest Version")
-    print_warning("This downloads the official installer/updater from GitHub (CIAUB/PG-Backup),")
-    print_warning("verifies its SHA256 against the publisher's hash file (if available),")
-    print_warning("and only then runs it as root.")
-
-    confirm = input(f"  {C.R2}> Proceed with update? (y/n): {C.RESET}").strip().lower()
-    if confirm != "y":
-        print_warning("Aborted.")
-        return
-
-    # Private 0700 temp dir — the script + hash files never live in
-    # world-readable /tmp while we're working with them.
-    tmp_dir = tempfile.mkdtemp(prefix="pgbackup_update_")
+def _validate_python_update(path, label):
+    """Compile a downloaded Python file before it can replace a live file."""
     try:
-        script_path = os.path.join(tmp_dir, "install.sh")
-        hash_path   = os.path.join(tmp_dir, "install.sh.sha256")
+        import py_compile
+        py_compile.compile(path, doraise=True)
+        print_success(f"{label} syntax check passed.")
+        return True
+    except Exception as e:
+        print_error(f"{label} validation failed: {e}")
+        return False
 
-        print_info(f"Downloading {UPDATE_SCRIPT_URL} …")
-        if not _download_to(UPDATE_SCRIPT_URL, script_path):
-            return
 
-        print_info(f"Downloading {UPDATE_HASH_URL} …")
-        hash_ok = _download_to(UPDATE_HASH_URL, hash_path)
+def _atomic_install(src, dest, mode=0o700):
+    """Atomically replace a live file, preserving rollback capability."""
+    parent = os.path.dirname(dest) or "/"
+    os.makedirs(parent, exist_ok=True)
+    tmp = os.path.join(parent, f".idontpg-update-{os.getpid()}-{uuid.uuid4().hex}")
+    shutil.copy2(src, tmp)
+    os.chmod(tmp, mode)
+    os.replace(tmp, dest)
 
-        if hash_ok:
-            try:
-                with open(hash_path) as f:
-                    expected = f.read().strip().split()[0].lower()
-                actual = _sha256_of(script_path)
-                if expected != actual:
-                    print_error("SHA256 mismatch — refusing to run the installer.")
-                    print_error(f"  expected: {expected}")
-                    print_error(f"  actual:   {actual}")
-                    return
-                print_success(f"SHA256 verified: {actual}")
-            except Exception as e:
-                print_warning(f"Could not parse hash file ({e}) — proceeding anyway.")
-        else:
-            # v4.2.1 — refuse to silently downgrade. An attacker who can
-            # MITM the hash file (or block its download) but not the
-            # script itself would otherwise get a free sudo bash. Require
-            # the user to opt in explicitly.
-            print_warning("Could not download install.sh.sha256 — no integrity check available.")
-            print_warning("(Network problem, or the publisher hasn't published a hash file on this branch.)")
-            yn = input(
-                f"  {C.R1}> Run the unverified installer as root anyway? (y/n): {C.RESET}"
-            ).strip().lower()
-            if yn != "y":
-                print_error("Aborted for safety. The hash file is the only defense against a")
-                print_error("tampered installer — without it, running the script is unsafe.")
-                return
-            print_warning("Proceeding WITHOUT integrity verification at the user's explicit request.")
+
+def _service_exists(name):
+    try:
+        return subprocess.run(
+            ["systemctl", "cat", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _restart_service_if_present(name, description):
+    if not _service_exists(name):
+        print_info(f"{description}: service not installed, skipped.")
+        return True
+    try:
+        result = subprocess.run(
+            ["systemctl", "restart", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            print_success(f"{description} restarted successfully.")
+            return True
+        print_error(f"Could not restart {description}: {result.stderr.strip() or 'unknown error'}")
+        return False
+    except Exception as e:
+        print_error(f"Could not restart {description}: {e}")
+        return False
+
+
+def _read_installed_version(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            head = f.read(12000)
+        m = re.search(r"v(\d+\.\d+(?:\.\d+)?)", head, re.I)
+        return f"v{m.group(1)}" if m else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def workflow_update(non_interactive=False):
+    print_header("Update idontPG-backup")
+    print_info("Source: durwinam/idontPG-backup (main)")
+    print_info("This updates the CLI + Web Panel + Web Panel logo.")
+    print_info("Your Telegram credentials, scheduler settings and PasarGuard data are not deleted.")
+
+    if not non_interactive:
+        confirm = input(f"  {C.R2}> Proceed with update? (y/n): {C.RESET}").strip().lower()
+        if confirm != "y":
+            print_warning("Aborted.")
+            return False
+
+    tmp_dir = tempfile.mkdtemp(prefix="idontpg_update_", dir="/tmp")
+    backups = {}
+    installed = []
+    try:
+        # Download everything before replacing anything.
+        downloaded = {}
+        for name in ("pg_backup.py", "web_panel.py", "logo.png"):
+            path = os.path.join(tmp_dir, name)
+            url = f"{UPDATE_REPO_RAW}/{name}"
+            print_info(f"Downloading {name} …")
+            if not _download_update_file(url, path):
+                print_error("Update aborted. No installed files were changed.")
+                return False
+            downloaded[name] = path
+
+        # Never install a syntactically broken Python update.
+        if not _validate_python_update(downloaded["pg_backup.py"], "pg_backup.py"):
+            return False
+        if not _validate_python_update(downloaded["web_panel.py"], "web_panel.py"):
+            return False
+
+        new_cli_version = _read_installed_version(downloaded["pg_backup.py"])
+        new_web_version = _read_installed_version(downloaded["web_panel.py"])
+        print_info(f"GitHub CLI version: {new_cli_version}")
+        print_info(f"GitHub Web Panel version: {new_web_version}")
+
+        # Backup live files in the same private temp directory.
+        for name, dest in UPDATE_FILES.items():
+            if os.path.isfile(dest):
+                backup = os.path.join(tmp_dir, "old-" + name)
+                shutil.copy2(dest, backup)
+                backups[dest] = backup
+
+        # Install CLI first. If a later step fails, restore everything changed.
+        _atomic_install(downloaded["pg_backup.py"], UPDATE_FILES["pg_backup.py"], 0o700)
+        installed.append(UPDATE_FILES["pg_backup.py"])
+
+        _atomic_install(downloaded["web_panel.py"], UPDATE_FILES["web_panel.py"], 0o700)
+        installed.append(UPDATE_FILES["web_panel.py"])
+
+        os.makedirs(os.path.dirname(UPDATE_FILES["logo.png"]), exist_ok=True)
+        _atomic_install(downloaded["logo.png"], UPDATE_FILES["logo.png"], 0o644)
+        installed.append(UPDATE_FILES["logo.png"])
+
+        # Ensure the web services execute the newly installed code immediately.
+        web_ok = _restart_service_if_present(
+            "idontpg-backup-web.service", "Web Panel"
+        )
+        scheduler_ok = _restart_service_if_present(
+            "idontpg-backup-web-scheduler.service", "Web Panel Scheduler"
+        )
+
+        if not (web_ok and scheduler_ok):
+            raise RuntimeError("one or more Web Panel services failed to restart")
 
         print()
-        print(hline())
-        # Run the saved file (not a network pipe) as root.
-        result = subprocess.run(["sudo", "bash", script_path])
+        print_success("Update completed successfully.")
+        print_success(f"Installed CLI: {_read_installed_version(UPDATE_FILES['pg_backup.py'])}")
+        print_success(f"Installed Web Panel: {_read_installed_version(UPDATE_FILES['web_panel.py'])}")
+        print_info("Existing backup credentials and scheduler configuration were preserved.")
+        return True
+
     except Exception as e:
-        print_error(f"Failed to run updater: {e}")
-        return
+        print_error(f"Update failed: {e}")
+        print_warning("Rolling back files changed by this update …")
+        for dest in reversed(installed):
+            backup = backups.get(dest)
+            try:
+                if backup and os.path.exists(backup):
+                    mode = 0o644 if dest.endswith(".png") else 0o700
+                    _atomic_install(backup, dest, mode)
+                else:
+                    os.unlink(dest)
+            except Exception as rollback_error:
+                print_error(f"Rollback failed for {dest}: {rollback_error}")
+        # Try to bring the old Web Panel back if it was replaced.
+        _restart_service_if_present("idontpg-backup-web.service", "Web Panel")
+        _restart_service_if_present("idontpg-backup-web-scheduler.service", "Web Panel Scheduler")
+        return False
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-    print(hline())
-    print()
 
-    if result.returncode == 0:
-        print_success("Update finished.")
-        print_info("Existing running scheduler instances (screen/tmux/systemd) keep running")
-        print_info("with the old code in memory — restart them from 'Manage Backup Schedulers'")
-        print_info("if you want them to pick up the new version.")
-        print_info("Re-run this script to use the updated version.")
-    else:
-        print_error(f"Updater exited with code {result.returncode}. Check the output above.")
 
 # ── Headless daemon entrypoint (used by screen / tmux / systemd) ──
 def run_daemon_from_args():
@@ -3818,6 +3901,13 @@ def main():
             time.sleep(1.5)
 
 if __name__ == "__main__":
+    # Direct CLI updater: `idont-backup update` / `idontPG-backup update`.
+    # It runs before the interactive menu and never touches scheduler data.
+    if len(sys.argv) >= 2 and sys.argv[1].lower() in ("update", "upgrade"):
+        if os.geteuid() != 0:
+            print_error("Update must be run as root.")
+            sys.exit(1)
+        sys.exit(0 if workflow_update(non_interactive=False) else 1)
     if "--daemon-backup" in sys.argv:
         run_daemon_from_args()
     else:
