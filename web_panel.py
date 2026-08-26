@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""idontPG-backup Web Panel
+Author: durwinam
+A dependency-free dark glass web UI for Telegram backup configuration.
+"""
+import argparse
+import base64
+import hashlib
+import hmac
+import html
+import importlib.util
+import json
+import os
+import secrets
+import subprocess
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+APP = "idontPG-backup"
+VERSION = "5.2.0"
+HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
+PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
+STATE_DIR = Path("/etc/idontPG-backup")
+CONFIG = STATE_DIR / "web.json"
+SCRIPT = Path(__file__).resolve()
+CORE_CANDIDATES = [
+    Path("/usr/local/bin/idontPG-backup"),
+    Path("/usr/local/bin/PG-Backup"),
+    SCRIPT.parent / "pg_backup.py",
+]
+SESSIONS = {}
+SESSION_TTL = 12 * 60 * 60
+
+
+def load_core():
+    for p in CORE_CANDIDATES:
+        if p.exists():
+            spec = importlib.util.spec_from_file_location("idontpg_core", p)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    raise RuntimeError("idontPG-backup core was not found")
+
+
+def load_cfg():
+    default = {
+        "token": "", "chat": "", "topic": "", "proxy": "",
+        "interval": "24", "node": False, "password_hash": "", "password_salt": ""
+    }
+    if not CONFIG.exists():
+        return default
+    try:
+        data = json.loads(CONFIG.read_text(encoding="utf-8"))
+        default.update(data)
+        return default
+    except Exception:
+        return default
+
+
+def save_cfg(c):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+    tmp = CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(c, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(CONFIG)
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 250_000)
+    return base64.b64encode(salt).decode(), base64.b64encode(digest).decode()
+
+
+def check_password(password, c):
+    try:
+        salt = base64.b64decode(c["password_salt"])
+        expected = base64.b64decode(c["password_hash"])
+        got = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 250_000)
+        return hmac.compare_digest(got, expected)
+    except Exception:
+        return False
+
+
+def proxy_opener(proxy):
+    if not proxy:
+        return urllib.request.build_opener()
+    return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+
+
+def telegram_request(token, endpoint, params, proxy=None, timeout=30):
+    url = f"https://api.telegram.org/bot{token}/{endpoint}"
+    query = urllib.parse.urlencode(params)
+    req = urllib.request.Request(f"{url}?{query}", method="GET")
+    with proxy_opener(proxy).open(req, timeout=timeout) as r:
+        payload = json.loads(r.read().decode("utf-8"))
+        return bool(payload.get("ok")), payload.get("description", "OK")
+
+
+def telegram_test(c):
+    token, chat, topic = c.get("token", ""), c.get("chat", ""), c.get("topic", "")
+    if not token or not chat:
+        return False, "Bot Token و Chat ID الزامی هستند."
+    params = {"chat_id": chat, "text": "✅ idontPG-backup\nTelegram connection test successful."}
+    if topic:
+        params["message_thread_id"] = topic
+    try:
+        return telegram_request(token, "sendMessage", params, c.get("proxy") or None, 30)
+    except Exception as e:
+        return False, str(e)
+
+
+def telegram_send(token, chat, topic, file_path, caption="", proxy=None):
+    if not token or not chat:
+        return False, "Bot Token و Chat ID الزامی هستند."
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    boundary = "----idontPG" + uuid.uuid4().hex
+    parts = []
+
+    def field(name, value):
+        parts.extend([
+            f"--{boundary}".encode(),
+            f'Content-Disposition: form-data; name="{name}"'.encode(),
+            b"", str(value).encode()
+        ])
+
+    field("chat_id", chat)
+    if topic:
+        field("message_thread_id", topic)
+    if caption:
+        field("caption", caption)
+    with open(file_path, "rb") as f:
+        data = f.read()
+    parts.extend([
+        f"--{boundary}".encode(),
+        f'Content-Disposition: form-data; name="document"; filename="{Path(file_path).name}"'.encode(),
+        b"Content-Type: application/zip", b"", data,
+        f"--{boundary}--".encode(), b""
+    ])
+    body = b"\r\n".join(parts)
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Content-Length", str(len(body)))
+    try:
+        with proxy_opener(proxy).open(req, timeout=300) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+            return bool(payload.get("ok")), payload.get("description", "OK")
+    except Exception as e:
+        return False, str(e)
+
+
+def send_archive(core, archive, c, caption):
+    """Send normal or oversized archive using the core splitter when available."""
+    if not archive or not os.path.exists(archive):
+        return False, "فایل Backup ساخته نشد."
+    parts_to_remove = []
+    try:
+        if os.path.getsize(archive) <= 49 * 1024 * 1024:
+            return telegram_send(c.get("token"), c.get("chat"), c.get("topic"), archive, caption, c.get("proxy") or None)
+        if hasattr(core, "_split_file_into_chunks"):
+            info = core._split_file_into_chunks(archive)
+            chunks = info.get("chunks", [])
+        else:
+            chunks = []
+        if not chunks:
+            return False, "تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست."
+        for i, part in enumerate(chunks, 1):
+            if part != archive:
+                parts_to_remove.append(part)
+            ok, msg = telegram_send(
+                c.get("token"), c.get("chat"), c.get("topic"), part,
+                f"{caption}\nPart {i}/{len(chunks)}", c.get("proxy") or None
+            )
+            if not ok:
+                return False, f"ارسال قسمت {i} ناموفق بود: {msg}"
+        return True, f"Backup در {len(chunks)} قسمت ارسال شد."
+    finally:
+        for part in parts_to_remove:
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+        try:
+            os.remove(archive)
+        except OSError:
+            pass
+
+
+def make_backup(send=True):
+    c = load_cfg()
+    core = load_core()
+    archive = core.create_backup(bool(c.get("node", False)))
+    if not send:
+        return True, f"Backup ساخته شد: {archive}"
+    return send_archive(core, archive, c, f"idontPG-backup · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+def scheduler_service(action):
+    return subprocess.run(
+        ["systemctl", action, "idontpg-backup-web-scheduler.service"],
+        capture_output=True, text=True, timeout=20
+    )
+
+
+def scheduler_status():
+    p = subprocess.run(["systemctl", "is-active", "idontpg-backup-web-scheduler.service"], capture_output=True, text=True)
+    return p.stdout.strip() or "inactive"
+
+
+def csrf_token(sid):
+    return SESSIONS.get(sid, {}).get("csrf", "")
+
+
+def cleanup_sessions():
+    now = time.time()
+    for sid, info in list(SESSIONS.items()):
+        if now - info.get("created", now) > SESSION_TTL:
+            SESSIONS.pop(sid, None)
+
+
+CSS = r"""
+:root{--bg:#06070d;--text:#f5f7ff;--muted:#9aa3b8;--line:rgba(255,255,255,.12);--glass:rgba(15,18,31,.58);--glass2:rgba(255,255,255,.055);--accent:#8b5cf6;--accent2:#22d3ee;--good:#34d399;--bad:#fb7185;--shadow:0 24px 70px rgba(0,0,0,.42)}
+*{box-sizing:border-box}html{min-height:100%;background:var(--bg)}body{margin:0;min-height:100vh;color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-x:hidden;background:radial-gradient(circle at 15% 15%,rgba(139,92,246,.18),transparent 30%),radial-gradient(circle at 85% 10%,rgba(34,211,238,.14),transparent 28%),radial-gradient(circle at 70% 90%,rgba(236,72,153,.12),transparent 32%),#06070d}
+body:before,body:after{content:"";position:fixed;z-index:-2;width:42vw;height:42vw;border-radius:50%;filter:blur(75px);opacity:.38;animation:float 16s ease-in-out infinite alternate;pointer-events:none}.body:before{background:#7c3aed;left:-12vw;top:10vh}.body:after{background:#06b6d4;right:-12vw;bottom:0}@keyframes float{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(5vw,-3vh,0) scale(1.16)}}
+.aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}.orb{position:absolute;border-radius:999px;filter:blur(50px);opacity:.28;mix-blend-mode:screen;animation:drift 18s infinite alternate ease-in-out}.o1{width:30vw;height:30vw;background:#8b5cf6;left:5%;top:18%;animation-duration:20s}.o2{width:25vw;height:25vw;background:#06b6d4;right:4%;top:25%;animation-duration:24s}.o3{width:24vw;height:24vw;background:#ec4899;left:35%;bottom:-8%;animation-duration:22s}@keyframes drift{to{transform:translate(8vw,-5vh) rotate(25deg) scale(1.2)}}
+.container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.logo{width:48px;height:48px;border-radius:16px;display:grid;place-items:center;font-size:23px;background:linear-gradient(135deg,rgba(139,92,246,.9),rgba(34,211,238,.7));box-shadow:0 12px 40px rgba(99,102,241,.28)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}.glass{background:linear-gradient(145deg,rgba(255,255,255,.085),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-3px);border-color:rgba(139,92,246,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;padding:11px 12px;border-radius:14px;background:rgba(0,0,0,.16);border:1px solid rgba(255,255,255,.07)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child{font-size:12px;max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 15px;color:#fff;text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:rgba(255,255,255,.07);transition:.18s}.btn:hover{transform:translateY(-1px);background:rgba(255,255,255,.11)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#0891b2);box-shadow:0 10px 28px rgba(79,70,229,.25)}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:#cbd5e1;margin-bottom:7px}.field input,.field select{width:100%;border:1px solid rgba(255,255,255,.12);background:rgba(2,6,23,.52);color:#fff;border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#8b5cf6;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}@media(max-width:800px){.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:min(100% - 22px,1180px);padding-top:18px}.glass{border-radius:20px;padding:18px}}
+"""
+
+
+def page(title, body, logged=True, notice="", kind="ok"):
+    nav = "" if not logged else '''<div class="actions" style="margin-top:18px"><a class="btn" href="/">⌂ داشبورد</a><a class="btn" href="/telegram">🤖 بکاپ تلگرام</a><a class="btn" href="/backup-settings">⚙️ تنظیمات بکاپ</a><a class="btn" href="/test">✈️ تست تلگرام</a><a class="btn" href="/logout">↪ خروج</a></div>'''
+    notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
+    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><title>{html.escape(title)} · {APP}</title><style>{CSS}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><div class="logo">🛡️</div><div><h1>{APP}</h1><p>Backup Control Center · durwinam</p></div></div><div class="pill">v{VERSION} · Secure Glass UI</div></header>{nav}{notice_html}{body}<div class="footer">idontPG-backup · {VERSION} · durwinam</div></main></body></html>'''
+
+
+def hidden_csrf(sid):
+    return f'<input type="hidden" name="csrf" value="{html.escape(csrf_token(sid))}">'
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def cookies(self):
+        raw = self.headers.get("Cookie", "")
+        out = {}
+        for part in raw.split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                out[k] = v
+        return out
+
+    def sid(self):
+        cleanup_sessions()
+        sid = self.cookies().get("idontpg_session", "")
+        return sid if sid in SESSIONS else None
+
+    def logged(self):
+        return self.sid() is not None
+
+    def redirect(self, path):
+        self.send_response(302)
+        self.send_header("Location", path)
+        self.end_headers()
+
+    def send_html(self, content, status=200):
+        data = content.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def form(self):
+        n = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(n).decode("utf-8", errors="replace")
+        return {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+
+    def require_csrf(self, data):
+        sid = self.sid()
+        return bool(sid and hmac.compare_digest(data.get("csrf", ""), csrf_token(sid)))
+
+    def login_page(self, error=""):
+        notice = f'<div class="notice bad">{html.escape(error)}</div>' if error else ''
+        body = f'''<section class="login"><div class="glass"><div class="icon">🔐</div><h2 style="font-size:28px;margin:16px 0 8px">ورود به پنل</h2><p class="sub" style="font-size:13px;line-height:1.8">پنل مدیریت Backup روی پورت 5000 اجرا می‌شود. برای ورود رمز ادمین را وارد کنید.</p>{notice}<form method="post" action="/login"><div class="field"><label>رمز عبور</label><input type="password" name="password" minlength="8" autocomplete="current-password" required></div><button class="btn primary full" type="submit">ورود امن ←</button></form></div></section>'''
+        return page("Login", body, False)
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        c = load_cfg()
+        if path == "/logout":
+            sid = self.sid()
+            if sid: SESSIONS.pop(sid, None)
+            self.send_response(302)
+            self.send_header("Set-Cookie", "idontpg_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/")
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
+        if not c.get("password_hash"):
+            body = '''<section class="login"><div class="glass"><div class="icon">✨</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، یک رمز ادمین حداقل ۸ کاراکتری بسازید.</p><form method="post" action="/setup"><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" required></div><button class="btn primary full">ساخت رمز و ورود</button></form></div></section>'''
+            self.send_html(page("First Run", body, False)); return
+        if path == "/login":
+            self.send_html(self.login_page()); return
+        if not self.logged():
+            self.redirect("/login"); return
+
+        status = scheduler_status()
+        if path == "/":
+            token = c.get("token") or "تنظیم نشده"
+            masked = (token[:8] + "••••••") if len(token) > 8 else token
+            status_class = "on" if status == "active" else "off"
+            body = f'''<section class="hero"><h2>کنترل کامل <span class="gradient">Backup</span></h2><p>همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.</p></section>
+<div class="grid">
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">🤖</div><div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div><span class="status {status_class}">{'● فعال' if status == 'active' else '○ متوقف'}</span></div>
+<div class="meta"><div class="meta-row"><span>Bot Token</span><span>{html.escape(masked)}</span></div><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>بازه</span><span>{html.escape(str(c.get('interval','24')))} ساعت</span></div></div>
+<div class="actions"><a class="btn primary" href="/telegram">⚙️ تنظیمات Telegram</a><a class="btn" href="/test">✈️ ارسال تست</a></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">⚙️</div><div><h3 class="title">تنظیمات Backup</h3><p class="sub">Backup Controls</p></div></div><span class="status {status_class}">{html.escape(status)}</span></div>
+<p class="empty">زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.</p><div class="actions"><a class="btn primary" href="/backup-settings">مدیریت Backup</a><form method="post" action="/backup" style="display:inline">{hidden_csrf(self.sid())}<button class="btn good" type="submit">💾 Backup دستی</button></form></div></article>
+<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📡</div><div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">✈️ ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
+</div>'''
+            self.send_html(page("Dashboard", body)); return
+
+        if path == "/telegram":
+            body = f'''<section class="hero"><h2>🤖 <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">برای Forum Topic مقدار message_thread_id را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تنظیمات</button><a class="btn" href="/test">✈️ تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            self.send_html(page("Telegram Backup", body)); return
+
+        if path == "/backup-settings":
+            checked = "checked" if c.get("node") else ""
+            body = f'''<section class="hero"><h2>⚙️ تنظیمات <span class="gradient">Backup</span></h2><p>کنترل Scheduler و اجرای Backup دستی.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">⏱️</div><div><h3 class="title">زمان‌بندی خودکار</h3><p class="sub">Scheduler</p></div></div><span class="status {'on' if status=='active' else 'off'}">{html.escape(status)}</span></div><form method="post" action="/backup-settings">{hidden_csrf(self.sid())}<div class="field"><label>بازه Backup (ساعت)</label><input name="interval" type="number" step="0.5" min="0.5" max="720" value="{html.escape(str(c.get('interval','24')))}" required></div><label class="toggle"><span>شامل PG-Node شود</span><input type="checkbox" name="node" {checked}></label><div class="actions"><button class="btn primary" type="submit">▶️ ذخیره و شروع</button><button class="btn danger" type="submit" formaction="/stop" formmethod="post">⏹ توقف</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">💾</div><div><h3 class="title">Backup دستی</h3><p class="sub">Manual Backup</p></div></div></div><p class="empty">همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.</p><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn good full">🚀 شروع Backup دستی</button></form></article></div>'''
+            self.send_html(page("Backup Settings", body)); return
+
+        if path == "/test":
+            body = f'''<section class="hero"><h2>✈️ تست <span class="gradient">Telegram</span></h2><p>یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.</p></section><div class="glass wide"><div class="meta"><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>Proxy</span><span>{html.escape(c.get('proxy') or 'بدون Proxy')}</span></div></div><form method="post" action="/test">{hidden_csrf(self.sid())}<div class="actions"><button class="btn primary">✈️ ارسال پیام تست</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            self.send_html(page("Telegram Test", body)); return
+
+        self.send_html(page("404", '<div class="glass"><h2>404</h2><p class="empty">صفحه پیدا نشد.</p></div>'), 404)
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        c = load_cfg()
+        data = self.form()
+
+        if path == "/setup":
+            pw = data.get("password", "")
+            if len(pw) < 8:
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            salt, digest = hash_password(pw)
+            c.update({"password_salt": salt, "password_hash": digest})
+            save_cfg(c)
+            self.redirect("/login"); return
+
+        if path == "/login":
+            if check_password(data.get("password", ""), c):
+                sid = secrets.token_urlsafe(32)
+                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24)}
+                self.send_response(302)
+                self.send_header("Set-Cookie", "idontpg_session=" + sid + "; HttpOnly; SameSite=Strict; Path=/")
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_html(self.login_page("رمز عبور اشتباه است."), 401)
+            return
+
+        if not self.logged():
+            self.redirect("/login"); return
+        if not self.require_csrf(data):
+            self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
+
+        if path == "/telegram":
+            c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
+            save_cfg(c)
+            self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
+
+        if path == "/test":
+            ok, msg = telegram_test(c)
+            kind = "ok" if ok else "bad"
+            body = f'<div class="glass"><div class="notice {kind}">{"✅ پیام تست با موفقیت ارسال شد." if ok else "❌ ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
+            self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
+
+        if path == "/backup-settings":
+            try:
+                interval = min(720, max(0.5, float(data.get("interval", "24"))))
+            except Exception:
+                interval = 24
+            c["interval"] = str(interval)
+            c["node"] = data.get("node") == "on"
+            save_cfg(c)
+            p = scheduler_service("restart")
+            ok = p.returncode == 0
+            self.send_html(page("Backup Settings", f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{"Scheduler ذخیره و شروع شد." if ok else "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد."}</div><a class="btn" href="/backup-settings">برگشت</a></div>')); return
+
+        if path == "/stop":
+            p = scheduler_service("stop")
+            self.redirect("/backup-settings"); return
+
+        if path == "/backup":
+            try:
+                ok, msg = make_backup(send=True)
+            except Exception as e:
+                ok, msg = False, str(e)
+            body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{("✅ Backup با موفقیت ساخته و ارسال شد." if ok else "❌ Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
+            self.send_html(page("Manual Backup", body)); return
+
+        self.send_html(page("404", '<div class="glass"><h2>404</h2></div>'), 404)
+
+
+def worker():
+    # Wait one configured interval before the first scheduled run.
+    # Manual backups remain available from the web panel at any time.
+    while True:
+        c = load_cfg()
+        try:
+            interval = max(0.5, float(c.get("interval", 24)))
+        except Exception:
+            interval = 24
+        time.sleep(interval * 3600)
+        c = load_cfg()
+        try:
+            if c.get("token") and c.get("chat"):
+                core = load_core()
+                archive = core.create_backup(bool(c.get("node", False)))
+                if archive:
+                    ok, msg = send_archive(core, archive, c, f"idontPG-backup · Scheduled · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(("[+]" if ok else "[-]"), msg, flush=True)
+            else:
+                print("[!] Telegram settings are incomplete; scheduled backup skipped.", flush=True)
+        except Exception as e:
+            print("[-] Scheduled backup failed:", e, flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--worker", action="store_true")
+    args = ap.parse_args()
+    if args.worker:
+        worker(); return
+    print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}")
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
