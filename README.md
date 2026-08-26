@@ -9,7 +9,7 @@
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
 <div align="center">
-  <img src="idontPG-img.png" alt="idontPG-backup Logo" width="420">
+  <img src="idontPG-img.png" alt="idontPG-backup Logo" width="300">
 </div>
 <br>
 
