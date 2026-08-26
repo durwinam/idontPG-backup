@@ -3708,7 +3708,7 @@ def _read_installed_version(path):
 def workflow_update(non_interactive=False):
     print_header("Update idontPG-backup")
     print_info("Source: durwinam/idontPG-backup (main)")
-    print_info("This updates the CLI + Web Panel + Web Panel logo.")
+    print_info("This updates the CLI + Web Panel + Web Panel logo from GitHub.")
     print_info("Your Telegram credentials, scheduler settings and PasarGuard data are not deleted.")
 
     if not non_interactive:
@@ -3723,9 +3723,22 @@ def workflow_update(non_interactive=False):
     try:
         # Download everything before replacing anything.
         downloaded = {}
-        for name in ("pg_backup.py", "web_panel.py", "logo.png"):
+
+        # GitHub paths:
+        #   pg_backup.py
+        #   web_panel.py
+        #   web/static/logo.png
+        #
+        # The previous updater incorrectly requested /main/logo.png,
+        # which does not exist and caused the entire update to abort.
+        update_sources = {
+            "pg_backup.py": f"{UPDATE_REPO_RAW}/pg_backup.py",
+            "web_panel.py": f"{UPDATE_REPO_RAW}/web_panel.py",
+            "logo.png": f"{UPDATE_REPO_RAW}/web/static/logo.png",
+        }
+
+        for name, url in update_sources.items():
             path = os.path.join(tmp_dir, name)
-            url = f"{UPDATE_REPO_RAW}/{name}"
             print_info(f"Downloading {name} …")
             if not _download_update_file(url, path):
                 print_error("Update aborted. No installed files were changed.")
