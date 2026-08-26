@@ -315,3 +315,17 @@ Download install.sh + install.sh.sha256   →   tmp dir خصوصی (0700)
 <sub><sub>Developed by durwinam</sub></sub>
 
 </div>
+
+## Direct CLI configuration
+
+After installation, Telegram backup settings can be opened directly from the terminal:
+
+```bash
+idont-backup --set
+```
+
+The same configuration screen is also available with:
+
+```bash
+idontPG-backup --set
+```
