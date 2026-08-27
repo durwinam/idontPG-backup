@@ -1,3 +1,7 @@
+## v5.5.3 — Account validation rules
+- Username: 5–32 chars, English letters/numbers/hyphen only.
+- Password: minimum 8 chars, at least 2 letters, 1 number, and one of `#@*`.
+
 ## v5.5.3
 - Fixed Light theme background so the purple/pink/red animated background is visible instead of the dark background.
 - Improved Light theme glass surfaces and mobile browser theme color.

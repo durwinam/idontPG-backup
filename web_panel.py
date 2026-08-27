@@ -90,7 +90,19 @@ def load_cfg():
 
 def canonical_username(value):
     value = str(value or "").strip()
-    return value if re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", value) else "admin"
+    return value if re.fullmatch(r"[A-Za-z0-9-]{5,32}", value) else "admin"
+
+
+def valid_username(value):
+    return bool(re.fullmatch(r"[A-Za-z0-9-]{5,32}", str(value or "")))
+
+
+def valid_password(value):
+    value = str(value or "")
+    return (len(value) >= 8 and
+            len(re.findall(r"[A-Za-z]", value)) >= 2 and
+            bool(re.search(r"\d", value)) and
+            bool(re.search(r"[#@*]", value)))
 
 
 def save_cfg(c):
@@ -409,11 +421,12 @@ def _directory_size(path):
     return total
 
 
-def get_backup_storage_usage():
-    """Size of locally retained backup archives created by idontPG-backup."""
-    candidates = [Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"), Path("/var/lib/idontPG-backup")]
+def _backup_archives():
+    """Find retained idontPG-backup archives without recursively scanning the whole filesystem."""
+    candidates = [Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"),
+                  Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup")]
     seen = set()
-    total = 0
+    found = []
     for directory in candidates:
         try:
             if not directory.is_dir():
@@ -425,17 +438,38 @@ def get_backup_storage_usage():
                     if key in seen:
                         continue
                     seen.add(key)
-                    total += stat.st_size
+                    found.append((item, stat.st_size, stat.st_mtime))
                 except OSError:
                     continue
         except OSError:
             continue
-    return _format_bytes(total)
+    found.sort(key=lambda x: x[2], reverse=True)
+    return found
+
+
+def get_backup_info():
+    """Return useful information about retained backup archives."""
+    archives = _backup_archives()
+    total = sum(size for _, size, _ in archives)
+    latest = archives[0] if archives else None
+    latest_name = latest[0].name if latest else "هنوز Backup ساخته نشده"
+    latest_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(latest[2])) if latest else "—"
+    return {
+        "count": len(archives),
+        "size": _format_bytes(total),
+        "latest": latest_name,
+        "latest_time": latest_time,
+    }
+
+
+def get_backup_storage_usage():
+    return get_backup_info()["size"]
 
 
 def get_panel_storage_usage():
-    """Size of the PasarGuard installation directory."""
-    return _format_bytes(_directory_size("/opt/pasarguard"))
+    """Actual PasarGuard data footprint: application + persistent data."""
+    total = _directory_size("/opt/pasarguard") + _directory_size("/var/lib/pasarguard")
+    return _format_bytes(total)
 
 
 def csrf_token(sid):
@@ -590,7 +624,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not c.get("password_hash"):
-            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری و یک رمز ادمین حداقل ۸ کاراکتری بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
+            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*\d)(?=.*[#@*]).{8,}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*\d)(?=.*[#@*]).{8,}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
             self.send_html(page("First Run", body, False)); return
         if path == "/login":
             self.send_html(self.login_page()); return
@@ -603,14 +637,15 @@ class Handler(BaseHTTPRequestHandler):
             masked = (token[:8] + "••••••") if len(token) > 8 else token
             status_class = "on" if status == "active" else "off"
             panel_info = get_panel_info()
-            backup_used = get_backup_storage_usage()
+            backup_info = get_backup_info()
+            backup_used = backup_info["size"]
             panel_used = get_panel_storage_usage()
             panel_status_class = "on" if panel_info["status"] == "Online" else "off"
             panel_url = html.escape(panel_info["url"])
             body = f'''<section class="hero"><h2>کنترل کامل <span class="gradient">Backup</span></h2><p>همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.</p></section>
 <div class="grid">
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">🛡️</div><div><h3 class="title">اطلاعات Backup</h3><p class="sub">Backup Information</p></div></div></div>
-<div class="meta"><div class="meta-row"><span>💾 حجم استفاده‌شده</span><strong>{html.escape(backup_used)}</strong></div></div></article>
+<div class="meta"><div class="meta-row"><span>📦 تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>💾 حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>🕒 آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><div class="icon">🌐</div><div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status {panel_status_class}">{'● آنلاین' if panel_info['status'] == 'Online' else '○ آفلاین'}</span></div>
 <div class="meta"><div class="meta-row"><span>🔗 لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row"><span>🟢 وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span>💾 حجم استفاده‌شده</span><strong>{html.escape(panel_used)}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📨</div><div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div><span class="status {status_class}">{'● فعال' if status == 'active' else '○ متوقف'}</span></div>
@@ -623,27 +658,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html(page("Dashboard", body)); return
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" disabled></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد، نقطه، خط تیره و زیرخط؛ ۳ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" required></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" disabled></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*\d)(?=.*[#@*]).{8,}" required></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*\d)(?=.*[#@*]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Account", body)); return
-
-        if path == "/account":
-            current = data.get("current_password", "")
-            username = data.get("username", "").strip()
-            pw = data.get("password", "")
-            confirm = data.get("password_confirm", "")
-            if not check_password(current, c):
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز عبور فعلی صحیح نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 401); return
-            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">نام کاربری نامعتبر است.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
-            if len(pw) < 8:
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
-            if pw != confirm:
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
-            salt, digest = hash_password(pw)
-            c.update({"username": username, "password_salt": salt, "password_hash": digest})
-            save_cfg(c)
-            SESSIONS.clear()
-            self.send_html(page("Account", '<div class="glass"><div class="notice ok">اطلاعات ورود با موفقیت تغییر کرد. برای ورود مجدد به صفحه Login بروید.</div><a class="btn primary" href="/login">ورود مجدد</a></div>', False)); return
 
         if path == "/telegram":
             body = f'''<section class="hero"><h2>🤖 <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تنظیمات</button><a class="btn" href="/test">✈️ تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
@@ -669,10 +685,10 @@ class Handler(BaseHTTPRequestHandler):
             username = data.get("username", "").strip()
             pw = data.get("password", "")
             confirm = data.get("password_confirm", "")
-            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۳ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
-            if len(pw) < 8:
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if not valid_username(username):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if not valid_password(pw):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
             if pw != confirm:
                 self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">تکرار رمز عبور با رمز جدید یکسان نیست.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
             salt, digest = hash_password(pw)
@@ -697,6 +713,25 @@ class Handler(BaseHTTPRequestHandler):
             self.redirect("/login"); return
         if not self.require_csrf(data):
             self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
+
+        if path == "/account":
+            current = data.get("current_password", "")
+            username = data.get("username", "").strip()
+            pw = data.get("password", "")
+            confirm = data.get("password_confirm", "")
+            if not check_password(current, c):
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز عبور فعلی صحیح نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 401); return
+            if not valid_username(username):
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
+            if not valid_password(pw):
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
+            if pw != confirm:
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
+            salt, digest = hash_password(pw)
+            c.update({"username": username, "password_salt": salt, "password_hash": digest})
+            save_cfg(c)
+            SESSIONS.clear()
+            self.send_html(page("Account", '<div class="glass"><div class="notice ok">اطلاعات ورود با موفقیت تغییر کرد. برای ورود مجدد به صفحه Login بروید.</div><a class="btn primary" href="/login">ورود مجدد</a></div>', False)); return
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
