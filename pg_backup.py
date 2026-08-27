@@ -449,28 +449,55 @@ def read_state(instance):
         return None
 
 # ── Logo / Header ────────────────────────────────────────────
+# v5.5.3 — large IDONT terminal branding.
+# Kept dependency-free so the CLI works on a clean server.
 LOGO = [
-    "██████╗  ██████╗ ██████╗  █████╗  ██████╗██╗  ██╗██╗   ██╗██████╗ ",
-    "██╔══██╗██╔════╝ ██╔══██╗██╔══██╗██╔════╝██║ ██╔╝██║   ██║██╔══██╗",
-    "██████╔╝██║  ███╗██████╔╝███████║██║     █████╔╝ ██║   ██║██████╔╝",
-    "██╔═══╝ ██║   ██║██╔══██╗██╔══██║██║     ██╔═██╗ ██║   ██║██╔═══╝ ",
-    "██║     ╚██████╔╝██████╔╝██║  ██║╚██████╗██║  ██╗╚██████╔╝██║     ",
-    "╚═╝      ╚═════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ",
+    "██╗██████╗  ██████╗ ███╗   ██╗████████╗",
+    "██║██╔══██╗██╔═══██╗████╗  ██║╚══██╔══╝",
+    "██║██║  ██║██║   ██║██╔██╗ ██║   ██║   ",
+    "██║██║  ██║██║   ██║██║╚██╗██║   ██║   ",
+    "██║██████╔╝╚██████╔╝██║ ╚████║   ██║   ",
+    "╚═╝╚═════╝  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ",
 ]
-LOGO_W = 71
+LOGO_W = max(len(line) for line in LOGO)
+
+
+def _get_web_panel_url():
+    """Return a usable Web Panel URL without adding dependencies."""
+    configured = os.environ.get("IDONT_PG_WEB_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=2) as r:
+            ip = r.read().decode("ascii", "ignore").strip()
+            if re.match(r"^\\d{1,3}(?:\\.\\d{1,3}){3}$", ip):
+                return f"http://{ip}:5000"
+    except Exception:
+        pass
+
+    try:
+        out = subprocess.check_output(["hostname", "-I"], text=True, timeout=1)
+        for item in out.split():
+            if "." in item and not item.startswith(("127.", "10.", "192.168.")):
+                return f"http://{item}:5000"
+    except Exception:
+        pass
+    return "http://127.0.0.1:5000"
+
 
 def print_header(title=""):
     clr()
     print()
     for line in LOGO:
         print(center(C.R1 + C.BOLD + line + C.RESET, LOGO_W))
-    sub = C.R1 + C.BOLD + "B A C K U P   U T I L I T Y   v 5 . 4 . 2   -   d u r w i n a m" + C.RESET
+    sub = C.R3 + C.BOLD + "B A C K U P   U T I L I T Y   v 5 . 5 . 3   -   d u r w i n a m" + C.RESET
     print(center(sub, 57))
     print()
     print(hline())
     if title:
         print()
-        print(center(C.R1 + C.BOLD + title + C.RESET, len(title)))
+        print(center(C.R1 + C.BOLD + title + C.RESET, min(len(title), 50)))
     print()
 
 # ── Shell helpers ─────────────────────────────────────────────
@@ -3869,7 +3896,7 @@ MENU = [
     ("4", "Manual Restore (From local zip)"),
     ("5", "Manage Backup Schedulers (start/stop/restart)"),
     ("6", "Update to Latest Version"),
-    ("7", "Exit"),
+    ("7", "Open Web Panel"),
 ]
 
 def main():
@@ -3878,11 +3905,13 @@ def main():
 
         print(f"  {C.R3}{'─' * 50}{C.RESET}")
         for num, label in MENU:
-            if num == "7":
-                print(f"  {C.R3}{num}{C.RESET}  {C.R3}-{C.RESET}  {C.R2}{label}{C.RESET}")
-            else:
-                print(f"  {C.R1}{num}{C.RESET}  {C.R3}-{C.RESET}  {C.WH}{label}{C.RESET}")
+            print(f"  {C.R1}{num}{C.RESET}  {C.R3}-{C.RESET}  {C.WH}{label}{C.RESET}")
         print(f"  {C.R3}{'─' * 50}{C.RESET}")
+        print()
+        panel_url = _get_web_panel_url()
+        print(f"  {C.R2}🌐 Web Panel:{C.RESET} {C.WH}{panel_url}{C.RESET}")
+        print(f"  {C.R3}Open the link above to sign in to the Web Panel.{C.RESET}")
+        print(f"  {C.R3}Press Ctrl+C to exit.{C.RESET}")
         print()
 
         choice = input(f"  {C.R2}> Select option (1-7): {C.RESET}").strip()
@@ -3907,8 +3936,8 @@ def main():
             workflow_update()
             pause_and_return()
         elif choice == "7":
-            print(f"  {C.R2}Goodbye.{C.RESET}\n")
-            sys.exit(0)
+            print(f"  {C.R2}🌐 Web Panel: {C.RESET}{_get_web_panel_url()}\n")
+            pause_and_return()
         else:
             print_error("Invalid option. Please enter 1-7.")
             time.sleep(1.5)
