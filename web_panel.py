@@ -421,52 +421,30 @@ def _directory_size(path):
 
 
 def _backup_archives():
-    """Find idontPG backup archives reliably, including systemd-created backups."""
-    # pg_backup.py writes archives to os.getcwd(). Under systemd that is
-    # normally /, but keep the common backup locations as fallbacks.
-    roots = [
-        Path.cwd(), SCRIPT.parent, Path("/root"), Path("/tmp"),
-        Path("/opt/pasarguard"), Path("/var/backups"),
-        Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup"),
-    ]
+    """Find retained idontPG-backup archives without recursively scanning the whole filesystem."""
+    candidates = [Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"),
+                  Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup")]
     seen = set()
     found = []
-
-    def add_file(item):
+    for directory in candidates:
         try:
-            if not item.is_file() or item.name.startswith("."):
-                return
-            if not item.name.startswith("backup_") or item.suffix.lower() != ".zip":
-                return
-            st = item.stat()
-            key = (st.st_dev, st.st_ino)
-            if key in seen:
-                return
-            seen.add(key)
-            found.append((item, st.st_size, st.st_mtime))
-        except OSError:
-            return
-
-    for root in roots:
-        try:
-            if not root.is_dir():
+            if not directory.is_dir():
                 continue
-            # Always check the root itself.
-            for item in root.glob("backup_*.zip"):
-                add_file(item)
-            # Also cover backups placed one or two directories below a
-            # service-specific directory. This avoids an expensive whole-
-            # filesystem recursive scan while handling custom working dirs.
-            if root != Path("/"):
-                for item in root.glob("*/backup_*.zip"):
-                    add_file(item)
-                for item in root.glob("*/*/backup_*.zip"):
-                    add_file(item)
+            for item in directory.glob("backup_*.zip"):
+                try:
+                    stat = item.stat()
+                    key = (stat.st_dev, stat.st_ino)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append((item, stat.st_size, stat.st_mtime))
+                except OSError:
+                    continue
         except OSError:
             continue
-
     found.sort(key=lambda x: x[2], reverse=True)
     return found
+
 
 def get_backup_info():
     """Return useful information about retained backup archives."""
@@ -571,102 +549,38 @@ def _panel_traffic_from_sqlite():
     return None
 
 def _panel_traffic_from_postgres():
-    """Read PasarGuard's global traffic counters from its configured DB.
-
-    PasarGuard can use PostgreSQL/TimescaleDB and the database service is not
-    guaranteed to be named ``postgres``.  We therefore parse the exact
-    SQLALCHEMY_DATABASE_URL first, then try the common compose DB services and
-    finally any services reported by ``docker compose config --services``.
-    """
-    from urllib.parse import urlparse, unquote
-
+    """Read PasarGuard's global system traffic counters from PostgreSQL."""
     env = _read_panel_env()
-    url = env.get("SQLALCHEMY_DATABASE_URL", "")
-    user = env.get("DB_USER", "pasarguard")
+    service = os.environ.get("IDONTPG_PG_DB_SERVICE", "postgres")
     dbname = env.get("DB_NAME", "pasarguard")
-    host = ""
-    port = ""
-    password = env.get("DB_PASSWORD", "")
-
-    if url:
-        try:
-            parsed = urlparse(url)
-            if parsed.username:
-                user = unquote(parsed.username)
-            if parsed.password:
-                password = unquote(parsed.password)
-            if parsed.hostname:
-                host = parsed.hostname
-            if parsed.port:
-                port = str(parsed.port)
-            if parsed.path and parsed.path != "/":
-                dbname = unquote(parsed.path.lstrip("/"))
-        except Exception:
-            pass
-
+    user = env.get("DB_USER", "pasarguard")
     queries = [
         "SELECT COALESCE(SUM(uplink),0) + COALESCE(SUM(downlink),0) FROM system;",
         "SELECT COALESCE((SELECT SUM(used_traffic) FROM users),0) + "
         "COALESCE((SELECT SUM(used_traffic_at_reset) FROM user_usage_logs),0);",
         "SELECT COALESCE(SUM(used_traffic),0) FROM users;",
     ]
-
-    # First try a local psql connection when the configured DB points at the host.
-    if shutil.which("psql") and host in ("", "localhost", "127.0.0.1", "::1"):
-        for q in queries:
-            envp = os.environ.copy()
-            if password:
-                envp["PGPASSWORD"] = password
-            cmd = ["psql", "-h", host or "127.0.0.1", "-U", user, "-d", dbname, "-tA", "-c", q]
-            if port:
-                cmd[2:2] = ["-p", port]
-            try:
-                proc = subprocess.run(cmd, cwd="/opt/pasarguard", env=envp,
-                                      capture_output=True, text=True, timeout=7)
-                if proc.returncode == 0:
-                    lines = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
-                    if lines and lines[-1].lstrip("-").isdigit():
-                        return max(0, int(lines[-1]))
-            except Exception:
-                pass
-
-    services = []
-    configured = os.environ.get("IDONTPG_PG_DB_SERVICE", "")
-    if configured:
-        services.append(configured)
-    services += ["postgres", "timescaledb", "db", "database", "postgresql"]
-
-    # Discover the actual database service from the PasarGuard compose file.
-    try:
-        proc = subprocess.run(
-            ["docker", "compose", "config", "--services"],
-            cwd="/opt/pasarguard", capture_output=True, text=True, timeout=7,
-        )
-        if proc.returncode == 0:
-            services += [x.strip() for x in proc.stdout.splitlines() if x.strip()]
-    except Exception:
-        pass
-
+    services = [service, "postgres", "db", "database"]
     seen = set()
+    commands = []
     for svc in services:
         if svc in seen:
             continue
         seen.add(svc)
         for q in queries:
-            commands = [
+            commands.extend([
                 ["docker", "compose", "exec", "-T", svc, "psql", "-U", user, "-d", dbname, "-tA", "-c", q],
                 ["docker", "compose", "exec", "-T", svc, "psql", "-U", "pasarguard", "-d", "pasarguard", "-tA", "-c", q],
-            ]
-            for cmd in commands:
-                try:
-                    proc = subprocess.run(cmd, cwd="/opt/pasarguard",
-                                          capture_output=True, text=True, timeout=7)
-                    if proc.returncode == 0:
-                        lines = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
-                        if lines and lines[-1].lstrip("-").isdigit():
-                            return max(0, int(lines[-1]))
-                except Exception:
-                    continue
+            ])
+    for cmd in commands:
+        try:
+            proc = subprocess.run(cmd, cwd="/opt/pasarguard", capture_output=True, text=True, timeout=7)
+            if proc.returncode == 0:
+                lines = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
+                if lines and lines[-1].lstrip("-").isdigit():
+                    return max(0, int(lines[-1]))
+        except Exception:
+            continue
     return None
 
 def get_panel_storage_usage():
