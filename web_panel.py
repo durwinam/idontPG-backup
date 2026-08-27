@@ -21,6 +21,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -99,10 +100,14 @@ def valid_username(value):
 
 def valid_password(value):
     value = str(value or "")
-    return (len(value) >= 8 and
+    # Passwords use English ASCII letters only. Allow ASCII digits and
+    # printable special characters, but reject spaces and non-ASCII letters.
+    return (8 <= len(value) <= 128 and
+            bool(re.fullmatch(r"[A-Za-z0-9!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~]+", value)) and
             len(re.findall(r"[A-Za-z]", value)) >= 2 and
+            bool(re.search(r"[A-Z]", value)) and
             bool(re.search(r"[0-9]", value)) and
-            bool(re.search(r"[#@*]", value)))
+            bool(re.search(r"[^A-Za-z0-9]", value)))
 
 
 def save_cfg(c):
@@ -466,10 +471,69 @@ def get_backup_storage_usage():
     return get_backup_info()["size"]
 
 
+def _panel_traffic_from_sqlite():
+    """Read PasarGuard's aggregate traffic from local SQLite databases.
+
+    This is traffic usage, not disk usage. We inspect the schema at runtime so
+    the dashboard works across PasarGuard schema revisions without hard-coding
+    one table name.
+    """
+    candidates = [
+        Path("/var/lib/pasarguard/db.sqlite3"),
+        Path("/var/lib/pasarguard/pasarguard.db"),
+        Path("/opt/pasarguard/db.sqlite3"),
+        Path("/opt/pasarguard/pasarguard.db"),
+    ]
+    for db in candidates:
+        if not db.is_file():
+            continue
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1)
+            tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            best = None
+            for table in tables:
+                cols = [r[1] for r in con.execute(f'PRAGMA table_info("{table.replace(chr(34), chr(34)*2)}")').fetchall()]
+                low = {c.lower(): c for c in cols}
+                pairs = []
+                for up in ("uplink", "upload", "up", "uplink_bytes"):
+                    if up in low:
+                        for down in ("downlink", "download", "down", "downlink_bytes"):
+                            if down in low:
+                                pairs.append((low[up], low[down])); break
+                        if pairs: break
+                if pairs:
+                    up, down = pairs[0]
+                    q = f'SELECT COALESCE(SUM("{up.replace(chr(34), chr(34)*2)}"),0), COALESCE(SUM("{down.replace(chr(34), chr(34)*2)}"),0) FROM "{table.replace(chr(34), chr(34)*2)}"'
+                    row = con.execute(q).fetchone()
+                    total = int(row[0] or 0) + int(row[1] or 0)
+                    if best is None or total > best:
+                        best = total
+                elif "used_traffic" in low:
+                    col = low["used_traffic"]
+                    q = f'SELECT COALESCE(SUM("{col.replace(chr(34), chr(34)*2)}"),0) FROM "{table.replace(chr(34), chr(34)*2)}"'
+                    total = int(con.execute(q).fetchone()[0] or 0)
+                    if best is None or total > best:
+                        best = total
+            con.close()
+            if best is not None:
+                return best
+        except Exception:
+            try: con.close()
+            except Exception: pass
+    return None
+
+
 def get_panel_storage_usage():
-    """Actual PasarGuard data footprint: application + persistent data."""
-    total = _directory_size("/opt/pasarguard") + _directory_size("/var/lib/pasarguard")
-    return _format_bytes(total)
+    """Return total PasarGuard traffic consumed by the whole panel.
+
+    The old implementation measured filesystem size, which is unrelated to
+    user traffic. Prefer PasarGuard's traffic database; return an explicit
+    unavailable marker instead of falsely reporting disk usage as traffic.
+    """
+    traffic = _panel_traffic_from_sqlite()
+    if traffic is not None:
+        return _format_bytes(traffic)
+    return "قابل دریافت نیست"
 
 
 def csrf_token(sid):
@@ -624,7 +688,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not c.get("password_hash"):
-            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[#@*]).{8,}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[#@*]).{8,}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
+            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
             self.send_html(page("First Run", body, False)); return
         if path == "/login":
             self.send_html(self.login_page()); return
@@ -658,7 +722,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html(page("Dashboard", body)); return
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" disabled></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[#@*]).{8,}" required></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[#@*]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required><div class="hint">حداقل ۸ کاراکتر، حداقل ۲ حرف انگلیسی، حداقل ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه مثل # @ *</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Account", body)); return
 
         if path == "/telegram":
@@ -724,7 +788,7 @@ class Handler(BaseHTTPRequestHandler):
             if not valid_username(username):
                 self.send_html(page("Account", '<div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             if not valid_password(pw):
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف انگلیسی، ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             if pw != confirm:
                 self.send_html(page("Account", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             salt, digest = hash_password(pw)
