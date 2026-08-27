@@ -100,14 +100,17 @@ def valid_username(value):
 
 def valid_password(value):
     value = str(value or "")
-    # Passwords use English ASCII letters only. Allow ASCII digits and
-    # printable special characters, but reject spaces and non-ASCII letters.
-    return (8 <= len(value) <= 128 and
-            bool(re.fullmatch(r"[A-Za-z0-9!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~]+", value)) and
-            len(re.findall(r"[A-Za-z]", value)) >= 2 and
+    # Passwords are ASCII-only: English letters, digits, and # @ *.
+    # Requirements: 8-128 chars, at least 2 English letters, 1 uppercase,
+    # 1 digit, and 1 allowed special character.
+    if not (8 <= len(value) <= 128):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9#@*]+", value):
+        return False
+    return (len(re.findall(r"[A-Za-z]", value)) >= 2 and
             bool(re.search(r"[A-Z]", value)) and
             bool(re.search(r"[0-9]", value)) and
-            bool(re.search(r"[^A-Za-z0-9]", value)))
+            bool(re.search(r"[#@*]", value)))
 
 
 def save_cfg(c):
@@ -471,69 +474,106 @@ def get_backup_storage_usage():
     return get_backup_info()["size"]
 
 
-def _panel_traffic_from_sqlite():
-    """Read PasarGuard's aggregate traffic from local SQLite databases.
+def _read_panel_env():
+    env_path = Path("/opt/pasarguard/.env")
+    data = {}
+    try:
+        if not env_path.is_file():
+            return data
+        for raw in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            data[key.strip()] = value
+    except Exception:
+        pass
+    return data
 
-    This is traffic usage, not disk usage. We inspect the schema at runtime so
-    the dashboard works across PasarGuard schema revisions without hard-coding
-    one table name.
-    """
+
+def _sqlite_db_candidates(env):
+    url = env.get("SQLALCHEMY_DATABASE_URL", "")
     candidates = [
         Path("/var/lib/pasarguard/db.sqlite3"),
-        Path("/var/lib/pasarguard/pasarguard.db"),
+        Path("/var/lib/pasarguard/db.sqlite"),
         Path("/opt/pasarguard/db.sqlite3"),
-        Path("/opt/pasarguard/pasarguard.db"),
+        Path("/opt/pasarguard/db.sqlite"),
     ]
-    for db in candidates:
+    if url.startswith("sqlite") and "///" in url:
+        raw = url.split("///", 1)[1].split("?", 1)[0]
+        if raw:
+            db_path = Path(raw)
+            if not db_path.is_absolute():
+                db_path = Path("/opt/pasarguard") / db_path
+            candidates.insert(0, db_path)
+    seen = set()
+    return [p for p in candidates if not (str(p) in seen or seen.add(str(p)))]
+
+
+def _panel_traffic_from_sqlite():
+    """Read PasarGuard lifetime traffic from its own admin accounting tables."""
+    env = _read_panel_env()
+    query = (
+        "SELECT COALESCE((SELECT SUM(used_traffic) FROM admins),0) "
+        "+ COALESCE((SELECT SUM(used_traffic_at_reset) FROM admin_usage_logs),0)"
+    )
+    for db in _sqlite_db_candidates(env):
         if not db.is_file():
             continue
+        con = None
         try:
-            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1)
-            tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-            best = None
-            for table in tables:
-                cols = [r[1] for r in con.execute(f'PRAGMA table_info("{table.replace(chr(34), chr(34)*2)}")').fetchall()]
-                low = {c.lower(): c for c in cols}
-                pairs = []
-                for up in ("uplink", "upload", "up", "uplink_bytes"):
-                    if up in low:
-                        for down in ("downlink", "download", "down", "downlink_bytes"):
-                            if down in low:
-                                pairs.append((low[up], low[down])); break
-                        if pairs: break
-                if pairs:
-                    up, down = pairs[0]
-                    q = f'SELECT COALESCE(SUM("{up.replace(chr(34), chr(34)*2)}"),0), COALESCE(SUM("{down.replace(chr(34), chr(34)*2)}"),0) FROM "{table.replace(chr(34), chr(34)*2)}"'
-                    row = con.execute(q).fetchone()
-                    total = int(row[0] or 0) + int(row[1] or 0)
-                    if best is None or total > best:
-                        best = total
-                elif "used_traffic" in low:
-                    col = low["used_traffic"]
-                    q = f'SELECT COALESCE(SUM("{col.replace(chr(34), chr(34)*2)}"),0) FROM "{table.replace(chr(34), chr(34)*2)}"'
-                    total = int(con.execute(q).fetchone()[0] or 0)
-                    if best is None or total > best:
-                        best = total
-            con.close()
-            if best is not None:
-                return best
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if not {"admins", "admin_usage_logs"}.issubset(tables):
+                continue
+            row = con.execute(query).fetchone()
+            return max(0, int(row[0] or 0))
         except Exception:
-            try: con.close()
-            except Exception: pass
+            continue
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+    return None
+
+
+def _panel_traffic_from_postgres():
+    """Read the same PasarGuard accounting fields through its DB container."""
+    env = _read_panel_env()
+    url = env.get("SQLALCHEMY_DATABASE_URL", "")
+    if not (url.startswith("postgresql") or url.startswith("postgres")):
+        return None
+    service = os.environ.get("IDONTPG_PG_DB_SERVICE", "postgres")
+    dbname = env.get("DB_NAME", "pasarguard")
+    user = env.get("DB_USER", "pasarguard")
+    query = "SELECT COALESCE((SELECT SUM(used_traffic) FROM admins),0) + COALESCE((SELECT SUM(used_traffic_at_reset) FROM admin_usage_logs),0);"
+    commands = [
+        ["docker", "compose", "exec", "-T", service, "psql", "-U", user, "-d", dbname, "-tA", "-c", query],
+        ["docker", "compose", "exec", "-T", service, "psql", "-U", "pasarguard", "-d", "pasarguard", "-tA", "-c", query],
+    ]
+    for cmd in commands:
+        try:
+            proc = subprocess.run(cmd, cwd="/opt/pasarguard", capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                value = proc.stdout.strip().splitlines()[-1].strip() if proc.stdout.strip() else ""
+                if value.isdigit():
+                    return max(0, int(value))
+        except Exception:
+            continue
     return None
 
 
 def get_panel_storage_usage():
-    """Return total PasarGuard traffic consumed by the whole panel.
-
-    The old implementation measured filesystem size, which is unrelated to
-    user traffic. Prefer PasarGuard's traffic database; return an explicit
-    unavailable marker instead of falsely reporting disk usage as traffic.
-    """
+    """Return total lifetime traffic consumed by all PasarGuard users/admins."""
     traffic = _panel_traffic_from_sqlite()
-    if traffic is not None:
-        return _format_bytes(traffic)
-    return "قابل دریافت نیست"
+    if traffic is None:
+        traffic = _panel_traffic_from_postgres()
+    return _format_bytes(traffic) if traffic is not None else "قابل دریافت نیست"
 
 
 def csrf_token(sid):
@@ -688,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not c.get("password_hash"):
-            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
+            body = '''<section class="login"><div class="glass"><div class="icon">🚀</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر و فقط شامل حروف انگلیسی، عدد و # @ * باشد؛ حداقل ۲ حرف، ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه لازم است.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=[A-Za-z0-9#@*]{8,128}$)(?=(?:.*[A-Za-z]){2,})(?=.*[A-Z])(?=.*[0-9])(?=.*[#@*])[A-Za-z0-9#@*]{8,128}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=[A-Za-z0-9#@*]{8,128}$)(?=(?:.*[A-Za-z]){2,})(?=.*[A-Z])(?=.*[0-9])(?=.*[#@*])[A-Za-z0-9#@*]{8,128}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
             self.send_html(page("First Run", body, False)); return
         if path == "/login":
             self.send_html(self.login_page()); return
@@ -722,7 +762,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html(page("Dashboard", body)); return
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required><div class="hint">حداقل ۸ کاراکتر، حداقل ۲ حرف انگلیسی، حداقل ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه مثل # @ *</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=[A-Za-z0-9#@*]{8,128}$)(?=(?:.*[A-Za-z]){2,})(?=.*[A-Z])(?=.*[0-9])(?=.*[#@*])[A-Za-z0-9#@*]{8,128}" required><div class="hint">حداقل ۸ کاراکتر؛ فقط حروف انگلیسی، عدد و # @ *؛ حداقل ۲ حرف انگلیسی، ۱ حرف بزرگ، ۱ عدد و ۱ کاراکتر ویژه</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=[A-Za-z0-9#@*]{8,128}$)(?=(?:.*[A-Za-z]){2,})(?=.*[A-Z])(?=.*[0-9])(?=.*[#@*])[A-Za-z0-9#@*]{8,128}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Account", body)); return
 
         if path == "/telegram":
@@ -752,7 +792,7 @@ class Handler(BaseHTTPRequestHandler):
             if not valid_username(username):
                 self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
             if not valid_password(pw):
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر باشد و فقط از حروف انگلیسی، عدد و # @ * تشکیل شود؛ حداقل ۲ حرف، ۱ حرف بزرگ، ۱ عدد و ۱ کاراکتر ویژه لازم است.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
             if pw != confirm:
                 self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">تکرار رمز عبور با رمز جدید یکسان نیست.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
             salt, digest = hash_password(pw)
@@ -788,7 +828,7 @@ class Handler(BaseHTTPRequestHandler):
             if not valid_username(username):
                 self.send_html(page("Account", '<div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             if not valid_password(pw):
-                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف انگلیسی، ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه باشد.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
+                self.send_html(page("Account", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر باشد و فقط شامل حروف انگلیسی، عدد و # @ * باشد؛ حداقل ۲ حرف، ۱ حرف بزرگ، ۱ عدد و ۱ کاراکتر ویژه لازم است.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             if pw != confirm:
                 self.send_html(page("Account", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
             salt, digest = hash_password(pw)
