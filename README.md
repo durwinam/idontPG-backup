@@ -13,7 +13,7 @@
 </div>
 <br>
 
-[![Version](https://img.shields.io/badge/version-v5.5.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.5.3-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.5.1
+#   idontPG-backup  v5.5.3
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 #   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB
@@ -3604,7 +3604,7 @@ def _update_scheduler_credentials(kind, name):
     _restart_scheduler_instance(kind, name)
 
 # ── Workflow 6: Update to latest version ──────────────────────
-# v5.5.1 — direct self-update for idontPG-backup.
+# v5.5.3 — direct self-update for idontPG-backup.
 # `idont-backup update` updates BOTH the CLI and the Web Panel from the
 # durwinam/idontPG-backup main branch. Existing credentials, scheduler
 # metadata, PasarGuard data and backup archives are deliberately untouched.
@@ -3621,7 +3621,7 @@ def _download_update_file(url, dest, timeout=45):
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "idontPG-backup-updater/5.5.1"},
+            headers={"User-Agent": "idontPG-backup-updater/5.5.3"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
