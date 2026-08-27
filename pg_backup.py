@@ -471,7 +471,7 @@ def _get_web_panel_url():
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=2) as r:
             ip = r.read().decode("ascii", "ignore").strip()
-            if re.match(r"^\\d{1,3}(?:\\.\\d{1,3}){3}$", ip):
+            if re.match(r"^\[0-9]{1,3}(?:\\.\[0-9]{1,3}){3}$", ip):
                 return f"http://{ip}:5000"
     except Exception:
         pass
@@ -610,7 +610,7 @@ def list_screen_sessions():
     if ok_v and out:
         import re
         for line in out.splitlines():
-            m = re.search(r"\d+\.(" + re.escape(SCREEN_SESSION_BASE) + r"(?:-[^\s]+)?)", line)
+            m = re.search(r"[0-9]+\.(" + re.escape(SCREEN_SESSION_BASE) + r"(?:-[^\s]+)?)", line)
             if m:
                 names.append(m.group(1))
     return names
@@ -1941,17 +1941,17 @@ def _join_chunks_if_needed(zip_name):
     import re, glob
 
     base = zip_name
-    m = re.match(r"^(.*)\.(\d{3})$", zip_name)
+    m = re.match(r"^(.*)\.([0-9]{3})$", zip_name)
     if m:
         base = m.group(1)
 
     candidates = sorted(glob.glob(base + ".*"))
-    parts = [c for c in candidates if re.search(r"\.\d{3}$", c)]
+    parts = [c for c in candidates if re.search(r"\.[0-9]{3}$", c)]
 
     if len(parts) < 2:
         return base
 
-    nums = sorted(int(re.search(r"\.(\d{3})$", p).group(1)) for p in parts)
+    nums = sorted(int(re.search(r"\.([0-9]{3})$", p).group(1)) for p in parts)
     expected = list(range(1, len(parts) + 1))
     if nums != expected:
         missing = sorted(set(expected) - set(nums))
@@ -3726,7 +3726,7 @@ def _read_installed_version(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             head = f.read(12000)
-        m = re.search(r"v(\d+\.\d+(?:\.\d+)?)", head, re.I)
+        m = re.search(r"v([0-9]+\.[0-9]+(?:\.[0-9]+)?)", head, re.I)
         return f"v{m.group(1)}" if m else "unknown"
     except Exception:
         return "unknown"

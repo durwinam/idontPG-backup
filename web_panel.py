@@ -101,7 +101,7 @@ def valid_password(value):
     value = str(value or "")
     return (len(value) >= 8 and
             len(re.findall(r"[A-Za-z]", value)) >= 2 and
-            bool(re.search(r"\d", value)) and
+            bool(re.search(r"[0-9]", value)) and
             bool(re.search(r"[#@*]", value)))
 
 
@@ -146,11 +146,11 @@ def normalize_topic_id(value):
         return value
     # Also accept common Telegram links such as:
     # https://t.me/c/1234567890/456 and https://t.me/<username>/456
-    m = re.search(r"/(?:c/)?(?:[^/]+/)?(\d+)(?:[?#].*)?$", value.rstrip("/"))
+    m = re.search(r"/(?:c/)?(?:[^/]+/)?([0-9]+)(?:[?#].*)?$", value.rstrip("/"))
     if m:
         return m.group(1)
     # A link may contain a trailing query/fragment or whitespace.
-    m = re.search(r"/(\d+)(?:[/?#].*)?$", value)
+    m = re.search(r"/([0-9]+)(?:[/?#].*)?$", value)
     return m.group(1) if m else ""
 
 
