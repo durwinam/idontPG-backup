@@ -5,6 +5,7 @@
 ### Advanced Backup & Migration Suite for PasarGuard
 
 **Backup · Restore · Migration · Telegram · Multi-Database · Docker**
+با تشکر از CIAB بابت همکاری در پروژه ❤️
 
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
