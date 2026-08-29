@@ -1,3 +1,12 @@
+## v5.5.4-final4 — status polish
+
+- Fixed animated status dots so they remain small circular indicators and cannot stretch inside metadata rows.
+- Removed redundant nested status wrappers from dashboard cards.
+- Kept status indicators limited to actual status/health/feedback locations; ordinary icons remain clean.
+- Updated the login lock to the same neon SVG icon system.
+- Restored the supplied PasarGuard lion logo without color inversion/filtering.
+- Backup information/data logic was left untouched.
+
 ## v5.5.4 — final fixes
 
 - Removed decorative status dots from ordinary UI icons; status glow now appears only where a real state is displayed.
