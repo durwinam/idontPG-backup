@@ -432,28 +432,23 @@ def _directory_size(path):
 
 
 def _backup_archives():
-    """Find retained idontPG-backup archives without recursively scanning the whole filesystem."""
-    candidates = [Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"),
-                  Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup")]
-    seen = set()
-    found = []
-    for directory in candidates:
+    """Find retained backup archives in known backup locations only."""
+    roots = [Path.cwd(), Path("/"), Path("/root"), Path("/tmp"),
+             Path("/opt/pasarguard"), Path("/var/lib/pasarguard"),
+             Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup")]
+    seen = set(); found = []
+    for root in roots:
         try:
-            if not directory.is_dir():
-                continue
-            for item in directory.glob("backup_*.zip"):
+            if not root.is_dir(): continue
+            for item in root.rglob("backup_*.zip"):
                 try:
-                    stat = item.stat()
-                    key = (stat.st_dev, stat.st_ino)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    found.append((item, stat.st_size, stat.st_mtime))
-                except OSError:
-                    continue
-        except OSError:
-            continue
-    found.sort(key=lambda x: x[2], reverse=True)
+                    if not item.is_file(): continue
+                    st=item.stat(); key=(st.st_dev,st.st_ino)
+                    if key in seen: continue
+                    seen.add(key); found.append((item,st.st_size,st.st_mtime))
+                except (OSError,PermissionError): continue
+        except (OSError,PermissionError): continue
+    found.sort(key=lambda x:x[2],reverse=True)
     return found
 
 
@@ -663,133 +658,95 @@ def _extract_number(value):
         return 0
 
 
+def _traffic_value_from_user(user):
+    """Read one user's current traffic without double-counting nested objects."""
+    if not isinstance(user, dict): return 0
+    for key in ("used_traffic", "traffic_used", "data_usage"):
+        if key in user and user.get(key) is not None: return _extract_number(user.get(key))
+    for key in ("subscription", "sub", "usage", "statistics", "stats"):
+        nested=user.get(key)
+        if isinstance(nested,dict):
+            for nkey in ("used_traffic", "traffic_used", "data_usage"):
+                if nkey in nested and nested.get(nkey) is not None: return _extract_number(nested.get(nkey))
+    return 0
+
+
 def _sum_user_traffic(payload):
-    """Extract total user traffic from common PasarGuard API list shapes."""
-    if isinstance(payload, dict):
-        # Some API versions wrap users in `users`, `items` or `data`.
-        for key in ("users", "items", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return _sum_user_traffic(value)
-        data = payload.get("data")
-        if isinstance(data, (list, dict)):
-            nested = _sum_user_traffic(data)
-            if nested > 0 or isinstance(data, list):
-                return nested
-        # Prefer a direct system-wide metric when available.
-        for key in ("total_traffic", "traffic_usage", "used_traffic", "total_used_traffic"):
-            if key in payload and isinstance(payload[key], (int, float, str)):
-                return _extract_number(payload[key])
+    if isinstance(payload,dict):
+        for key in ("users","items","results"):
+            value=payload.get(key)
+            if isinstance(value,list): return sum(_traffic_value_from_user(u) for u in value)
+        data=payload.get("data")
+        if isinstance(data,list): return sum(_traffic_value_from_user(u) for u in data)
+        if isinstance(data,dict): return _sum_user_traffic(data)
+        for key in ("total_traffic","traffic_usage","used_traffic","total_used_traffic"):
+            if key in payload: return _extract_number(payload.get(key))
         return 0
-    if not isinstance(payload, list):
-        return 0
-    total = 0
-    for user in payload:
-        if not isinstance(user, dict):
-            continue
-        # PasarGuard user objects expose used_traffic; accept a few historical
-        # aliases without recursively summing unrelated nested values.
-        if "used_traffic" in user:
-            total += _extract_number(user.get("used_traffic"))
-        elif "traffic_used" in user:
-            total += _extract_number(user.get("traffic_used"))
-        elif "data_usage" in user:
-            total += _extract_number(user.get("data_usage"))
-        else:
-            uplink = user.get("uplink", user.get("upload", user.get("incoming_bandwidth", 0)))
-            downlink = user.get("downlink", user.get("download", user.get("outgoing_bandwidth", 0)))
-            total += _extract_number(uplink) + _extract_number(downlink)
-    return total
+    if isinstance(payload,list): return sum(_traffic_value_from_user(u) for u in payload)
+    return 0
 
 
 def _users_page(payload):
-    """Return (users, reported_total) from the PasarGuard users response."""
-    if isinstance(payload, list):
-        return [u for u in payload if isinstance(u, dict)], None
-    if not isinstance(payload, dict):
-        return [], None
-
-    users = payload.get("users")
-    if not isinstance(users, list):
-        users = payload.get("items")
-    if not isinstance(users, list):
-        data = payload.get("data")
-        if isinstance(data, dict):
-            users = data.get("users") or data.get("items")
-        elif isinstance(data, list):
-            users = data
-    if not isinstance(users, list):
-        users = []
-
-    total = None
-    for key in ("total", "count", "total_count"):
-        value = payload.get(key)
-        if value is None and isinstance(payload.get("data"), dict):
-            value = payload["data"].get(key)
+    if isinstance(payload,list): return [u for u in payload if isinstance(u,dict)],None
+    if not isinstance(payload,dict): return [],None
+    users=payload.get("users") or payload.get("items") or payload.get("results")
+    if not isinstance(users,list):
+        data=payload.get("data")
+        if isinstance(data,dict): users=data.get("users") or data.get("items") or data.get("results")
+        elif isinstance(data,list): users=data
+    if not isinstance(users,list): users=[]
+    total=None
+    for key in ("total","count","total_count"):
+        value=payload.get(key)
+        if value is None and isinstance(payload.get("data"),dict): value=payload["data"].get(key)
         try:
-            if value is not None:
-                total = int(value)
-                break
-        except (TypeError, ValueError):
-            pass
-    return [u for u in users if isinstance(u, dict)], total
+            if value is not None: total=int(value); break
+        except (TypeError,ValueError): pass
+    return [u for u in users if isinstance(u,dict)],total
 
 
 def _sum_all_panel_users(token):
-    """Sum current `used_traffic` for every PasarGuard user.
-
-    PasarGuard returns users through a paginated /api/users endpoint. Reading
-    only the first page makes the dashboard show a small/incorrect total on
-    installations with many users, so walk every page explicitly.
-    """
-    total_used = 0
-    offset = 0
-    limit = 100
-    seen_pages = set()
-
-    while offset < 100000:
-        path = f"/users?limit={limit}&offset={offset}&load_sub=true"
-        payload = _pg_json_get(path, token)
-        users, reported_total = _users_page(payload)
-        marker = (offset, len(users), reported_total)
-        if marker in seen_pages:
-            break
-        seen_pages.add(marker)
-
-        for user in users:
-            value = user.get("used_traffic")
-            if value is None:
-                value = user.get("traffic_used")
-            if value is None:
-                value = user.get("data_usage")
-            total_used += _extract_number(value)
-
-        if not users:
-            break
+    """Sum current used_traffic across every PasarGuard user page."""
+    total_used=0; offset=0; limit=100; seen=set()
+    while offset<100000:
+        path=f"/users?limit={limit}&sort=-created_at&load_sub=true&offset={offset}&is_protocol=false"
+        payload=_pg_json_get(path,token); users,reported_total=_users_page(payload)
+        marker=(offset,len(users),reported_total)
+        if marker in seen: break
+        seen.add(marker); total_used += sum(_traffic_value_from_user(u) for u in users)
+        if not users: break
         offset += len(users)
-
-        if reported_total is not None and offset >= reported_total:
-            break
-        if len(users) < limit and reported_total is None:
-            break
-
+        if reported_total is not None and offset>=reported_total: break
+        if len(users)<limit and reported_total is None: break
     return total_used
 
 
-def get_panel_storage_usage():
-    """Return the total current traffic consumed by all PasarGuard users."""
-    try:
-        token = _pg_api_token()
-        if not token:
-            return "قابل دریافت نیست"
+def _panel_system_stats(token):
+    """Fallback for PasarGuard versions exposing aggregate traffic in /system."""
+    try: payload=_pg_json_get("/system",token)
+    except Exception: return 0
+    if not isinstance(payload,dict): return 0
+    for key in ("total_traffic","traffic_usage","used_traffic","lifetime_traffic"):
+        value=_extract_number(payload.get(key))
+        if value>0: return value
+    for key in ("traffic","stats","statistics"):
+        nested=payload.get(key)
+        if isinstance(nested,dict):
+            for nkey in ("total_traffic","traffic_usage","used_traffic","lifetime_traffic"):
+                value=_extract_number(nested.get(nkey))
+                if value>0: return value
+    return 0
 
-        # The users endpoint is the authoritative panel-side source for
-        # `used_traffic`; summing every page avoids the old first-page bug.
-        total = _sum_all_panel_users(token)
+def get_panel_storage_usage():
+    """Return current total traffic consumed by the whole PasarGuard panel."""
+    try:
+        token=_pg_api_token()
+        if not token: return "قابل دریافت نیست"
+        total=_sum_all_panel_users(token)
+        if total<=0: total=_panel_system_stats(token)
         return _format_bytes(total)
     except Exception:
         return "قابل دریافت نیست"
-
 
 def get_disk_info():
     try:
@@ -915,8 +872,8 @@ def _resource_chart_html():
     return chart
 
 def get_health_info(c,panel_info=None):
-    panel_info=panel_info or get_panel_info(); scheduler=scheduler_status(); telegram_ok=bool(c.get('token') and c.get('chat')); disk=get_disk_info()
-    return [('Web Panel',True,'در حال اجرا'),('PasarGuard',panel_info.get('status')=='Online',panel_info.get('status','Unknown')),('Telegram',telegram_ok,'تنظیم شده' if telegram_ok else 'تنظیم نشده'),('Scheduler',scheduler=='active','فعال' if scheduler=='active' else 'متوقف'),('Disk',float(disk.get('percent',0))<90,f"{disk.get('percent',0)}% استفاده")]
+    panel_info=panel_info or get_panel_info(); scheduler=scheduler_status(); telegram_ok=bool(c.get('token') and c.get('chat')); disk=get_disk_info(); pct=float(disk.get('percent',0) or 0)
+    return [('Web Panel',True,'در حال اجرا','ok'),('PasarGuard',panel_info.get('status')=='Online',panel_info.get('status','Unknown'),'ok' if panel_info.get('status')=='Online' else 'bad'),('Telegram',telegram_ok,'تنظیم شده' if telegram_ok else 'تنظیم نشده','ok' if telegram_ok else 'bad'),('Scheduler',scheduler=='active','فعال' if scheduler=='active' else 'متوقف','ok' if scheduler=='active' else 'bad'),('Disk',pct<90,f"{pct:.1f}% استفاده",'bad' if pct>=90 else ('warn' if pct>=70 else 'ok'))]
 
 def _backup_history_records():
     """Merge persisted backup metadata with archives still present on disk."""
@@ -981,7 +938,7 @@ body.light{--bg:#fff1f8;--text:#26162d;--muted:#735c78;--line:rgba(124,58,237,.1
 body.light:before,body.light:after{opacity:.55}body:before,body:after{content:"";position:fixed;z-index:-2;width:42vw;height:42vw;border-radius:50%;filter:blur(75px);opacity:.38;animation:float 16s ease-in-out infinite alternate;pointer-events:none}body:before{background:#7c3aed;left:-12vw;top:10vh}body:after{background:#06b6d4;right:-12vw;bottom:0}@keyframes float{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(5vw,-3vh,0) scale(1.16)}}
 .aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}.orb{position:absolute;border-radius:999px;filter:blur(50px);opacity:.28;mix-blend-mode:screen;animation:drift 18s infinite alternate ease-in-out}.o1{width:30vw;height:30vw;background:#8b5cf6;left:5%;top:18%;animation-duration:20s}.o2{width:25vw;height:25vw;background:#06b6d4;right:4%;top:25%;animation-duration:24s}.o3{width:24vw;height:24vw;background:#ec4899;left:35%;bottom:-8%;animation-duration:22s}.light .o1{background:#a855f7}.light .o2{background:#ec4899}.light .o3{background:#ef4444}@keyframes drift{to{transform:translate(8vw,-5vh) rotate(25deg) scale(1.2)}}
 .container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .panel-brand-icon{overflow:hidden}.panel-brand-icon img{width:100%;height:100%;object-fit:contain;border-radius:inherit;filter:brightness(0) invert(1);padding:7px}.light .panel-brand-icon img{filter:none}
-.icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.activity-list{display:grid;gap:9px}.activity-list .meta-row{margin:0}.activity-bad{border-color:rgba(251,113,133,.30)}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
+.neo-icon{width:46px;height:46px;flex:0 0 46px;display:inline-grid;place-items:center;border-radius:15px;color:#8bdcff;background:radial-gradient(circle at 35% 25%,rgba(139,92,246,.30),rgba(34,211,238,.08) 55%,rgba(0,0,0,.08));border:1px solid rgba(103,232,249,.20);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 18px rgba(34,211,238,.10);position:relative;isolation:isolate;transition:.28s ease}.neo-icon:before{content:"";position:absolute;inset:5px;border-radius:11px;background:radial-gradient(circle,rgba(255,255,255,.08),transparent 70%);opacity:.75;z-index:-1}.neo-icon:after{content:"";position:absolute;width:9px;height:9px;right:7px;top:6px;border-radius:50%;background:#67e8f9;box-shadow:0 0 8px #67e8f9,0 0 18px rgba(103,232,249,.75);animation:iconPulse 1.8s ease-in-out infinite}.neo-icon svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px currentColor)}.neo-icon.card-icon{width:50px;height:50px;flex-basis:50px;border-radius:16px}.neo-icon.hero-icon{width:42px;height:42px;flex-basis:42px;vertical-align:middle;margin-inline-end:8px}.neo-icon.meta-icon,.neo-icon.inline-icon{width:18px;height:18px;flex-basis:18px;border:0;background:none;box-shadow:none;border-radius:0;vertical-align:-4px}.neo-icon.meta-icon:after,.neo-icon.inline-icon:after{display:none}.neo-icon.meta-icon svg,.neo-icon.inline-icon svg{width:18px;height:18px;filter:drop-shadow(0 0 4px currentColor)}.neo-icon:hover{transform:translateY(-2px) rotate(-2deg);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 24px rgba(34,211,238,.24)}@keyframes iconPulse{0%,100%{transform:scale(.8);opacity:.55}50%{transform:scale(1.15);opacity:1}}.status-dot{display:inline-block;width:9px;height:9px;flex:0 0 9px;border-radius:50%;vertical-align:middle;margin-inline-end:6px;background:#6ee7b7;box-shadow:0 0 7px #6ee7b7,0 0 18px rgba(110,231,183,.65);animation:statusGlow 1.5s ease-in-out infinite}.status-dot.status-ok{background:#4ade80;box-shadow:0 0 7px #4ade80,0 0 18px rgba(74,222,128,.75)}.status-dot.status-bad{background:#fb7185;box-shadow:0 0 7px #fb7185,0 0 18px rgba(251,113,133,.75)}.status-dot.status-warn{background:#facc15;box-shadow:0 0 7px #facc15,0 0 18px rgba(250,204,21,.75)}@keyframes statusGlow{50%{opacity:.55;transform:scale(.82)}}body.light .neo-icon{color:#4f46e5;background:radial-gradient(circle at 35% 25%,rgba(168,85,247,.22),rgba(255,255,255,.42) 62%);border-color:rgba(124,58,237,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.75),0 0 18px rgba(124,58,237,.12)}body.light .neo-icon:after{background:#06b6d4;box-shadow:0 0 8px #06b6d4,0 0 18px rgba(6,182,212,.5)}.icon{color:var(--text)}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.activity-list{display:grid;gap:9px}.activity-list .meta-row{margin:0}.activity-bad{border-color:rgba(251,113,133,.30)}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
 
 /* v5.5.3 glass navigation drawer + mobile hero fix */
 .menu-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);cursor:pointer;font-size:21px;line-height:1;transition:.25s ease;display:inline-flex;align-items:center;justify-content:center}
@@ -1159,7 +1116,7 @@ class Handler(BaseHTTPRequestHandler):
 <article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("test", "card-icon")}<div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">{ui_icon("test", "inline-icon")} ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">Backup بعدی</h3><p class="sub">Next Scheduled Backup</p></div></div><span class="status {status_class}">{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</span></div><div class="meta"><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} زمان باقی‌مانده</span><strong id="backupCountdown">{html.escape(str(_next_backup_seconds(c.get('interval','24'), backup_info.get('latest_mtime')) if status == 'active' else '—'))}</strong></div><div class="meta-row"><span>{ui_icon("settings", "meta-icon")} وضعیت Scheduler</span><strong>{'فعال' if status == 'active' else 'متوقف'}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("activity", "card-icon")}<div><h3 class="title">آخرین فعالیت‌ها</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("health", "card-icon")}<div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row"><span>{status_dot("ok" if ok else "bad")} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail in get_health_info(c,panel_info))}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("health", "card-icon")}<div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row"><span>{status_dot(state)} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail,state in get_health_info(c,panel_info))}</div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("disk", "card-icon")}<div><h3 class="title">فضای دیسک</h3><p class="sub">Disk Monitor</p></div></div></div><div class="disk-meter"><div class="disk-bar"><span style="width:{get_disk_info()["percent"]}%"></span></div><div class="meta-row"><span>استفاده‌شده</span><strong>{html.escape(str(get_disk_info()["used"]))}</strong></div><div class="meta-row"><span>آزاد</span><strong>{html.escape(str(get_disk_info()["free"]))}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("chart", "card-icon")}<div><h3 class="title">Backup هفت روز اخیر</h3><p class="sub">Backup Activity</p></div></div></div><div class="mini-chart">{''.join(f'<div class="chart-col"><div class="chart-value">{html.escape(_format_bytes(size)) if size else "0 B"}</div><div class="chart-bar"><span style="height:{pct}%"></span></div><small>{html.escape(label)}</small></div>' for label,size,pct in get_backup_chart())}</div><div class="actions"><a class="btn" href="/backups">{ui_icon("backup", "inline-icon")} مدیریت Backupها</a></div></article>
 <article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("chart", "card-icon")}<div><h3 class="title">منابع سرور مجازی</h3><p class="sub">Live CPU · RAM · Disk usage</p></div></div></div>{_resource_chart_html()}</article>
