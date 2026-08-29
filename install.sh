@@ -44,6 +44,16 @@ WEB_LOGO_PATH="${WEB_ASSET_DIR}/logo.png"
 
 WEB_PANEL_URL="${RAW_BASE}/main/web_panel.py"
 WEB_LOGO_URL="${RAW_BASE}/main/web/static/logo.png"
+WEB_PG_LOGO_URL="${RAW_BASE}/main/web/static/pasarguard-logo.png"
+
+# When this installer is run from the distributed ZIP, prefer the bundled
+# files. This makes the release self-contained and prevents an unrelated
+# GitHub 'main' update from replacing the exact version being installed.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_CORE="${SCRIPT_DIR}/pg_backup.py"
+LOCAL_WEB_PANEL="${SCRIPT_DIR}/web_panel.py"
+LOCAL_LOGO="${SCRIPT_DIR}/web/static/logo.png"
+LOCAL_PG_LOGO="${SCRIPT_DIR}/web/static/pasarguard-logo.png"
 
 DEVELOPER="durwinam"
 
@@ -146,19 +156,24 @@ fi
 
 rm -f "${TMP_PATH}"
 
-if ! curl \
-    --fail \
-    --silent \
-    --show-error \
-    --location \
-    --retry 3 \
-    --connect-timeout 15 \
-    "${SOURCE}" \
-    -o "${TMP_PATH}"; then
+if [ -s "${LOCAL_CORE}" ]; then
+    echo -e "${GREEN}[*] Source: bundled pg_backup.py${NC}"
+    cp "${LOCAL_CORE}" "${TMP_PATH}"
+else
+    if ! curl \
+        --fail \
+        --silent \
+        --show-error \
+        --location \
+        --retry 3 \
+        --connect-timeout 15 \
+        "${SOURCE}" \
+        -o "${TMP_PATH}"; then
 
-    echo -e "${RED}[-] Failed to download pg_backup.py${NC}"
-    echo -e "${RED}[-] URL: ${SOURCE}${NC}"
-    exit 1
+        echo -e "${RED}[-] Failed to download pg_backup.py${NC}"
+        echo -e "${RED}[-] URL: ${SOURCE}${NC}"
+        exit 1
+    fi
 fi
 
 if [ ! -s "${TMP_PATH}" ]; then
@@ -243,7 +258,10 @@ echo -e "${GREEN}[*] Installing Web Panel...${NC}"
 
 rm -f "${WEB_TMP}"
 
-if curl \
+if [ -s "${LOCAL_WEB_PANEL}" ]; then
+    echo -e "${GREEN}[*] Source: bundled web_panel.py${NC}"
+    cp "${LOCAL_WEB_PANEL}" "${WEB_TMP}"
+elif curl \
     --fail \
     --silent \
     --show-error \
@@ -276,7 +294,11 @@ if curl \
         # Download logo
         # ──────────────────────────────────────────────────────────────────────
 
-        if curl \
+        if [ -s "${LOCAL_LOGO}" ]; then
+            cp "${LOCAL_LOGO}" "${WEB_LOGO_PATH}"
+            chmod 644 "${WEB_LOGO_PATH}"
+            echo -e "${GREEN}[+] Bundled Web Panel logo installed.${NC}"
+        elif curl \
             --fail \
             --silent \
             --show-error \
@@ -286,17 +308,28 @@ if curl \
             "${WEB_LOGO_URL}?cache=$(date +%s)" \
             -o "${WEB_LOGO_PATH}" \
             && [ -s "${WEB_LOGO_PATH}" ]; then
-
             chmod 644 "${WEB_LOGO_PATH}"
-
             echo -e "${GREEN}[+] Web Panel logo installed.${NC}"
-
         else
-
             rm -f "${WEB_LOGO_PATH}"
-
             echo -e "${YELLOW}[!] Logo download failed. Web Panel will use fallback branding.${NC}"
+        fi
 
+        # PasarGuard's official lion mark is kept separately from idontPG branding.
+        PG_LOGO_PATH="${WEB_ASSET_DIR}/pasarguard-logo.png"
+        if [ -s "${LOCAL_PG_LOGO}" ]; then
+            cp "${LOCAL_PG_LOGO}" "${PG_LOGO_PATH}"
+            chmod 644 "${PG_LOGO_PATH}"
+            echo -e "${GREEN}[+] Bundled PasarGuard logo installed.${NC}"
+        elif curl \
+            --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+            "${WEB_PG_LOGO_URL}?cache=$(date +%s)" -o "${PG_LOGO_PATH}" \
+            && [ -s "${PG_LOGO_PATH}" ]; then
+            chmod 644 "${PG_LOGO_PATH}"
+            echo -e "${GREEN}[+] PasarGuard logo installed.${NC}"
+        else
+            rm -f "${PG_LOGO_PATH}"
+            echo -e "${YELLOW}[!] PasarGuard logo unavailable; panel branding fallback will be used.${NC}"
         fi
 
         # ──────────────────────────────────────────────────────────────────────
