@@ -1,3 +1,10 @@
+## v5.5.4-final5 — status dot fix
+
+- Fixed status indicators being stretched into square/rectangular boxes by generic meta-row span selectors.
+- Status indicators are now isolated with a dedicated `meta-label` wrapper.
+- Strengthened green/blue/yellow/red neon glow and animation for status states.
+- Decorative icons remain independent from status indicators.
+
 ## v5.5.4-final4 — status polish
 
 - Fixed animated status dots so they remain small circular indicators and cannot stretch inside metadata rows.
