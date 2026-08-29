@@ -258,6 +258,9 @@ echo -e "${GREEN}[*] Installing Web Panel...${NC}"
 
 rm -f "${WEB_TMP}"
 
+# Prefer the exact files bundled in the release ZIP. Fall back to GitHub only
+# when a bundled file is genuinely missing. Keep validation/installation
+# outside the source-selection branch so bundled ZIP installs work correctly.
 if [ -s "${LOCAL_WEB_PANEL}" ]; then
     echo -e "${GREEN}[*] Source: bundled web_panel.py${NC}"
     cp "${LOCAL_WEB_PANEL}" "${WEB_TMP}"
@@ -271,66 +274,60 @@ elif curl \
     "${WEB_PANEL_URL}?cache=$(date +%s)" \
     -o "${WEB_TMP}" \
     && [ -s "${WEB_TMP}" ]; then
+    echo -e "${GREEN}[*] Source: GitHub web_panel.py${NC}"
+else
+    echo -e "${RED}[!] Failed to obtain web_panel.py${NC}"
+    echo -e "${YELLOW}[!] CLI installation remains intact.${NC}"
+    rm -f "${WEB_TMP}"
+    exit 1
+fi
 
-    # Validate Web Panel Python
-    if ! python3 -m py_compile "${WEB_TMP}" >/dev/null 2>&1; then
+# Validate Web Panel Python before replacing the installed copy.
+if ! python3 -m py_compile "${WEB_TMP}" >/dev/null 2>&1; then
+    echo -e "${RED}[!] Web Panel Python validation failed.${NC}"
+    echo -e "${YELLOW}[!] Existing Web Panel was not replaced.${NC}"
+    rm -f "${WEB_TMP}"
+    exit 1
+fi
 
-        echo -e "${RED}[!] Web Panel Python validation failed.${NC}"
-        echo -e "${YELLOW}[!] CLI installation remains intact.${NC}"
+install -m 700 "${WEB_TMP}" "${WEB_PANEL_PATH}"
+rm -f "${WEB_TMP}"
 
-        rm -f "${WEB_TMP}"
+mkdir -p "${WEB_ASSET_DIR}"
+chmod 755 "${WEB_ASSET_DIR}"
 
-    else
+# idontPG branding logo
+if [ -s "${LOCAL_LOGO}" ]; then
+    cp "${LOCAL_LOGO}" "${WEB_LOGO_PATH}"
+    chmod 644 "${WEB_LOGO_PATH}"
+    echo -e "${GREEN}[+] Bundled Web Panel logo installed.${NC}"
+elif curl \
+    --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+    "${WEB_LOGO_URL}?cache=$(date +%s)" -o "${WEB_LOGO_PATH}" \
+    && [ -s "${WEB_LOGO_PATH}" ]; then
+    chmod 644 "${WEB_LOGO_PATH}"
+    echo -e "${GREEN}[+] Web Panel logo installed.${NC}"
+else
+    rm -f "${WEB_LOGO_PATH}"
+    echo -e "${YELLOW}[!] idontPG logo unavailable; fallback branding will be used.${NC}"
+fi
 
-        install -m 700 "${WEB_TMP}" "${WEB_PANEL_PATH}"
-
-        rm -f "${WEB_TMP}"
-
-        mkdir -p "${WEB_ASSET_DIR}"
-
-        chmod 755 "${WEB_ASSET_DIR}"
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Download logo
-        # ──────────────────────────────────────────────────────────────────────
-
-        if [ -s "${LOCAL_LOGO}" ]; then
-            cp "${LOCAL_LOGO}" "${WEB_LOGO_PATH}"
-            chmod 644 "${WEB_LOGO_PATH}"
-            echo -e "${GREEN}[+] Bundled Web Panel logo installed.${NC}"
-        elif curl \
-            --fail \
-            --silent \
-            --show-error \
-            --location \
-            --retry 3 \
-            --connect-timeout 15 \
-            "${WEB_LOGO_URL}?cache=$(date +%s)" \
-            -o "${WEB_LOGO_PATH}" \
-            && [ -s "${WEB_LOGO_PATH}" ]; then
-            chmod 644 "${WEB_LOGO_PATH}"
-            echo -e "${GREEN}[+] Web Panel logo installed.${NC}"
-        else
-            rm -f "${WEB_LOGO_PATH}"
-            echo -e "${YELLOW}[!] Logo download failed. Web Panel will use fallback branding.${NC}"
-        fi
-
-        # PasarGuard's official lion mark is kept separately from idontPG branding.
-        PG_LOGO_PATH="${WEB_ASSET_DIR}/pasarguard-logo.png"
-        if [ -s "${LOCAL_PG_LOGO}" ]; then
-            cp "${LOCAL_PG_LOGO}" "${PG_LOGO_PATH}"
-            chmod 644 "${PG_LOGO_PATH}"
-            echo -e "${GREEN}[+] Bundled PasarGuard logo installed.${NC}"
-        elif curl \
-            --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
-            "${WEB_PG_LOGO_URL}?cache=$(date +%s)" -o "${PG_LOGO_PATH}" \
-            && [ -s "${PG_LOGO_PATH}" ]; then
-            chmod 644 "${PG_LOGO_PATH}"
-            echo -e "${GREEN}[+] PasarGuard logo installed.${NC}"
-        else
-            rm -f "${PG_LOGO_PATH}"
-            echo -e "${YELLOW}[!] PasarGuard logo unavailable; panel branding fallback will be used.${NC}"
-        fi
+# PasarGuard official lion mark — kept separate from idontPG branding.
+PG_LOGO_PATH="${WEB_ASSET_DIR}/pasarguard-logo.png"
+if [ -s "${LOCAL_PG_LOGO}" ]; then
+    cp "${LOCAL_PG_LOGO}" "${PG_LOGO_PATH}"
+    chmod 644 "${PG_LOGO_PATH}"
+    echo -e "${GREEN}[+] Bundled PasarGuard logo installed.${NC}"
+elif curl \
+    --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+    "${WEB_PG_LOGO_URL}?cache=$(date +%s)" -o "${PG_LOGO_PATH}" \
+    && [ -s "${PG_LOGO_PATH}" ]; then
+    chmod 644 "${PG_LOGO_PATH}"
+    echo -e "${GREEN}[+] PasarGuard logo installed.${NC}"
+else
+    rm -f "${PG_LOGO_PATH}"
+    echo -e "${YELLOW}[!] PasarGuard logo unavailable; fallback branding will be used.${NC}"
+fi
 
         # ──────────────────────────────────────────────────────────────────────
         # Web Panel service
@@ -414,17 +411,6 @@ EOF
 
         echo
         echo -e "${GREEN}[+] Web Panel:${NC} http://SERVER_IP:5000"
-
-    fi
-
-else
-
-    rm -f "${WEB_TMP}"
-
-    echo -e "${YELLOW}[!] Web Panel download failed.${NC}"
-    echo -e "${YELLOW}[!] CLI installation remains available.${NC}"
-
-fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Final verification

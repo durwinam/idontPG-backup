@@ -1,3 +1,12 @@
+## v5.5.4 — final fixes
+
+- Removed decorative status dots from ordinary UI icons; status glow now appears only where a real state is displayed.
+- Fixed PasarGuard logo delivery and bundled-ZIP installer flow.
+- Panel traffic now sums `used_traffic` from all PasarGuard users, including usage reported by Nodes, with pagination.
+- Backup history is persisted in two durable locations and merged safely.
+- Backup metadata is recorded before the local archive is removed after Telegram upload.
+- Kept Backup information logic independent from Panel traffic information.
+
 ## v5.5.4
 - Fixed PasarGuard total traffic calculation by reading every page of `/api/users` and summing each user's `used_traffic`.
 - Fixed scheduled backups not being recorded in dashboard backup history.

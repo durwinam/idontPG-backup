@@ -459,6 +459,10 @@ def _backup_archives():
 
 ACTIVITY_FILE = STATE_DIR / "activities.json"
 BACKUP_HISTORY_FILE = STATE_DIR / "backup_history.json"
+BACKUP_HISTORY_FILES = (
+    STATE_DIR / "backup_history.json",
+    Path("/var/lib/idontPG-backup/backup_history.json"),
+)
 
 def _record_activity(message, kind="ok"):
     """Keep a tiny rolling activity history for the dashboard."""
@@ -508,34 +512,50 @@ def _relative_time(ts):
     except Exception:
         return "—"
 
-def _record_backup_created(archive):
-    """Persist a tiny history entry so Telegram-sent backups remain visible.
+def _load_backup_history():
+    """Load and merge backup metadata from all durable history locations."""
+    merged = []
+    seen = set()
+    for history_path in BACKUP_HISTORY_FILES:
+        try:
+            if not history_path.is_file():
+                continue
+            raw = json.loads(history_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "")
+                if not name or name in seen:
+                    continue
+                merged.append(item)
+                seen.add(name)
+        except Exception:
+            continue
+    return merged
 
-    The backup core removes an archive after a successful Telegram upload, so
-    scanning the filesystem alone cannot provide a reliable count/last-backup
-    value. Only metadata is stored here; backup contents are never copied.
-    """
+
+def _record_backup_created(archive):
+    """Persist backup metadata before the archive is sent/removed."""
     try:
         path = Path(archive)
         if not path.is_file():
             return
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        items = []
-        if BACKUP_HISTORY_FILE.is_file():
-            try:
-                raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8"))
-                if isinstance(raw, list):
-                    items = raw
-            except Exception:
-                items = []
         stat = path.stat()
-        items.insert(0, {"name": path.name, "size": int(stat.st_size), "mtime": float(stat.st_mtime)})
-        # Keep a bounded history; this is metadata only and stays tiny.
-        BACKUP_HISTORY_FILE.write_text(json.dumps(items[:100], ensure_ascii=False), encoding="utf-8")
-        try:
-            BACKUP_HISTORY_FILE.chmod(0o600)
-        except OSError:
-            pass
+        entry = {"name": path.name, "size": int(stat.st_size), "mtime": float(stat.st_mtime)}
+        existing = _load_backup_history()
+        existing = [entry] + [x for x in existing if str(x.get("name") or "") != path.name]
+        existing = existing[:100]
+        for history_path in BACKUP_HISTORY_FILES:
+            try:
+                history_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = history_path.with_suffix(history_path.suffix + ".tmp")
+                tmp.write_text(json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+                os.chmod(tmp, 0o600)
+                tmp.replace(history_path)
+            except Exception:
+                continue
     except Exception:
         pass
 
@@ -543,14 +563,7 @@ def _record_backup_created(archive):
 def get_backup_info():
     """Return reliable backup statistics from local files + creation history."""
     archives = _backup_archives()
-    history = []
-    try:
-        if BACKUP_HISTORY_FILE.is_file():
-            raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                history = [x for x in raw if isinstance(x, dict)]
-    except Exception:
-        history = []
+    history = _load_backup_history()
 
     # Files still on disk are authoritative for their current size. For
     # Telegram backups that are removed after upload, persisted metadata keeps
@@ -777,26 +790,17 @@ def _sum_all_panel_users(token):
 
 
 def get_panel_storage_usage():
-    """Return total PasarGuard traffic from the authoritative system-users API.
+    """Return total user traffic reported by PasarGuard's Node-backed users.
 
-    PasarGuard aggregates usage reported by its nodes into this endpoint.
-    We intentionally do not read the paginated dashboard user list here: that
-    can be incomplete or permission-scoped and was the source of the previous
-    incorrect/unavailable totals.
+    PasarGuard exposes user usage through GET /api/users; each user contains
+    ``used_traffic`` populated from the connected Node(s). Walk every page so
+    the dashboard does not accidentally show only the first 100 users.
     """
     try:
         token = _pg_api_token()
         if not token:
             return "قابل دریافت نیست"
-
-        payload = _pg_json_get("/system/users", token)
-        if not isinstance(payload, dict):
-            return "قابل دریافت نیست"
-
-        incoming = _extract_number(payload.get("incoming_bandwidth", 0))
-        outgoing = _extract_number(payload.get("outgoing_bandwidth", 0))
-        total = incoming + outgoing
-        return _format_bytes(total)
+        return _format_bytes(_sum_all_panel_users(token))
     except Exception:
         return "قابل دریافت نیست"
 
@@ -943,11 +947,7 @@ def _backup_history_records():
     current = {item.name: (size, mtime) for item, size, mtime in archives}
     records = []
     seen = set()
-    try:
-        raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8")) if BACKUP_HISTORY_FILE.is_file() else []
-        history = raw if isinstance(raw, list) else []
-    except Exception:
-        history = []
+    history = _load_backup_history()
 
     for item in history:
         if not isinstance(item, dict):
@@ -1002,7 +1002,7 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 .container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .panel-brand-icon{overflow:hidden}.panel-brand-icon{overflow:hidden;display:grid;place-items:center}.panel-brand-icon img{width:100%;height:100%;object-fit:contain;border-radius:inherit;filter:brightness(0) invert(1);padding:7px}.light .panel-brand-icon img{filter:brightness(0);}
 .icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;min-width:0}.card-head>div{min-width:0;flex:1 1 auto}.card-head>.status,.card-head>.status-wrap{flex:0 0 auto;white-space:nowrap}.status-wrap{display:inline-flex;align-items:center}.card-head .title{overflow-wrap:anywhere;word-break:break-word}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}/* v5.5.4 final icon/status system: icons are decorative; status glow is state-only. */
 .neo-icon{position:relative;display:inline-grid;place-items:center;flex:0 0 44px;width:44px;height:44px;border-radius:15px;color:#8fdcff;background:linear-gradient(145deg,rgba(93,225,255,.13),rgba(124,58,237,.18) 58%,rgba(236,72,153,.10));border:1px solid rgba(120,180,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 22px rgba(76,201,240,.08),0 8px 28px rgba(124,58,237,.08);transition:transform .25s ease,box-shadow .25s ease,color .25s ease,border-color .25s ease;overflow:visible}
-.neo-icon:before{content:"";position:absolute;inset:5px;border-radius:11px;background:radial-gradient(circle,rgba(255,255,255,.07),transparent 68%);pointer-events:none}.neo-icon:after{content:"";position:absolute;width:6px;height:6px;right:5px;top:5px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor;opacity:.78;animation:iconSpark 2.4s ease-in-out infinite}.neo-icon svg{position:relative;z-index:1;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px currentColor)}@keyframes iconSpark{0%,100%{transform:scale(.72);opacity:.45}50%{transform:scale(1.18);opacity:1}}
+.neo-icon:before{content:"";position:absolute;inset:5px;border-radius:11px;background:radial-gradient(circle,rgba(255,255,255,.07),transparent 68%);pointer-events:none}.neo-icon:after{display:none!important}.neo-icon svg{position:relative;z-index:1;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px currentColor)}@keyframes iconSpark{0%,100%{transform:scale(.72);opacity:.45}50%{transform:scale(1.18);opacity:1}}
 .neo-icon.card-icon{flex:0 0 50px;width:50px;height:50px;border-radius:17px}
 .neo-icon.card-icon svg{width:25px;height:25px;stroke-width:1.7}
 .neo-icon.meta-icon{flex-basis:18px;width:18px;height:18px;border:0;background:transparent;box-shadow:none;border-radius:0;color:#9fb5d7;overflow:visible}.neo-icon.meta-icon:before,.neo-icon.meta-icon:after,.neo-icon.inline-icon:before,.neo-icon.inline-icon:after{display:none}
@@ -1012,12 +1012,12 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 .neo-icon:hover{transform:translateY(-2px) scale(1.03);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 0 26px rgba(76,201,240,.14)}
 .icon-backup,.icon-cpu{color:#67e8f9}.icon-panel,.icon-ram{color:#8ab4ff}.icon-telegram,.icon-link{color:#6ea8ff}.icon-settings,.icon-dashboard{color:#b58cff}.icon-account{color:#ff8bc7}.icon-clock{color:#ffd166}.icon-health{color:#59e39a}.icon-chart,.icon-disk{color:#ff9f68}.icon-activity,.icon-traffic{color:#65e6d1}.icon-test{color:#ffe36e}.icon-download{color:#70d7ff}.icon-trash{color:#ff7f96}.icon-rocket{color:#ff78c8}
 .status{display:inline-flex;align-items:center;gap:7px;font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
-.status-dot{display:inline-block;width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#7c8aa5;box-shadow:0 0 0 3px rgba(124,138,165,.08),0 0 10px rgba(124,138,165,.35);animation:statusPulse 1.8s ease-in-out infinite}
+.status-dot{display:inline-block!important;width:7px!important;height:7px!important;min-width:7px!important;max-width:7px!important;min-height:7px!important;max-height:7px!important;flex:0 0 7px!important;padding:0!important;margin:0!important;border-radius:50%!important;background:#7c8aa5;box-shadow:0 0 0 3px rgba(124,138,165,.08),0 0 10px rgba(124,138,165,.35);animation:statusPulse 1.8s ease-in-out infinite}
 .status-dot.status-ok{background:#43e39a;box-shadow:0 0 0 3px rgba(67,227,154,.10),0 0 13px rgba(67,227,154,.85)}
 .status-dot.status-info{background:#61b7ff;box-shadow:0 0 0 3px rgba(97,183,255,.10),0 0 13px rgba(97,183,255,.82)}
 .status-dot.status-warn{background:#ffd45c;box-shadow:0 0 0 3px rgba(255,212,92,.10),0 0 13px rgba(255,212,92,.82)}
 .status-dot.status-bad{background:#ff5e78;box-shadow:0 0 0 3px rgba(255,94,120,.10),0 0 13px rgba(255,94,120,.85)}
-.status-dot.status-off{background:#8a96ad;box-shadow:0 0 0 3px rgba(138,150,173,.08),0 0 10px rgba(138,150,173,.35);animation:none}.logo-fallback-text{display:none;font-weight:900;font-size:16px;letter-spacing:-.5px;color:#8fdcff;text-shadow:0 0 12px #6ee7ff}.logo-fallback .logo-fallback-text{display:block}.logo-fallback img{display:none!important}.panel-brand-icon{position:relative}.panel-brand-icon:after{content:"";position:absolute;width:7px;height:7px;right:6px;top:6px;border-radius:50%;background:#6ee7ff;box-shadow:0 0 12px #6ee7ff;animation:iconSpark 2.2s ease-in-out infinite}.status.status-ok .status-dot{animation:statusPulse 1.8s ease-in-out infinite}.status.status-bad .status-dot{animation:statusPulse 1.2s ease-in-out infinite}.status.status-warn .status-dot{animation:statusPulse 1.5s ease-in-out infinite}
+.status-dot.status-off{background:#8a96ad;box-shadow:0 0 0 3px rgba(138,150,173,.08),0 0 10px rgba(138,150,173,.35);animation:none}.logo-fallback-text{display:none;font-weight:900;font-size:16px;letter-spacing:-.5px;color:#8fdcff;text-shadow:0 0 12px #6ee7ff}.logo-fallback .logo-fallback-text{display:block}.logo-fallback img{display:none!important}.panel-brand-icon{position:relative}.panel-brand-icon:after{display:none!important}.status.status-ok .status-dot{animation:statusPulse 1.8s ease-in-out infinite}.status.status-bad .status-dot{animation:statusPulse 1.2s ease-in-out infinite}.status.status-warn .status-dot{animation:statusPulse 1.5s ease-in-out infinite}
 .status.status-ok{color:#8ff0c2;background:rgba(67,227,154,.075);border-color:rgba(67,227,154,.20)}
 .status.status-info{color:#9ed4ff;background:rgba(97,183,255,.075);border-color:rgba(97,183,255,.20)}
 .status.status-warn{color:#ffe58d;background:rgba(255,212,92,.075);border-color:rgba(255,212,92,.20)}
