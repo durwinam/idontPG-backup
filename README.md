@@ -4,7 +4,6 @@
 
 ### Advanced Backup & Migration Suite for PasarGuard
 
-برگرفته از CIAUB
 **Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  

@@ -265,6 +265,8 @@ def make_backup(send=True):
     core = load_core()
     try:
         archive = core.create_backup(bool(c.get("node", False)))
+        if archive and os.path.exists(archive):
+            _record_backup_created(archive)
         if not send:
             _record_activity("Backup دستی ساخته شد", "ok")
             return True, f"Backup ساخته شد: {archive}"
@@ -456,6 +458,7 @@ def _backup_archives():
 
 
 ACTIVITY_FILE = STATE_DIR / "activities.json"
+BACKUP_HISTORY_FILE = STATE_DIR / "backup_history.json"
 
 def _record_activity(message, kind="ok"):
     """Keep a tiny rolling activity history for the dashboard."""
@@ -505,18 +508,79 @@ def _relative_time(ts):
     except Exception:
         return "—"
 
+def _record_backup_created(archive):
+    """Persist a tiny history entry so Telegram-sent backups remain visible.
+
+    The backup core removes an archive after a successful Telegram upload, so
+    scanning the filesystem alone cannot provide a reliable count/last-backup
+    value. Only metadata is stored here; backup contents are never copied.
+    """
+    try:
+        path = Path(archive)
+        if not path.is_file():
+            return
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        items = []
+        if BACKUP_HISTORY_FILE.is_file():
+            try:
+                raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    items = raw
+            except Exception:
+                items = []
+        stat = path.stat()
+        items.insert(0, {"name": path.name, "size": int(stat.st_size), "mtime": float(stat.st_mtime)})
+        # Keep a bounded history; this is metadata only and stays tiny.
+        BACKUP_HISTORY_FILE.write_text(json.dumps(items[:100], ensure_ascii=False), encoding="utf-8")
+        try:
+            BACKUP_HISTORY_FILE.chmod(0o600)
+        except OSError:
+            pass
+    except Exception:
+        pass
+
+
 def get_backup_info():
-    """Return useful information about retained backup archives."""
+    """Return reliable backup statistics from local files + creation history."""
     archives = _backup_archives()
-    total = sum(size for _, size, _ in archives)
-    latest = archives[0] if archives else None
-    latest_name = latest[0].name if latest else "هنوز Backup ساخته نشده"
-    latest_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(latest[2])) if latest else "—"
+    history = []
+    try:
+        if BACKUP_HISTORY_FILE.is_file():
+            raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                history = [x for x in raw if isinstance(x, dict)]
+    except Exception:
+        history = []
+
+    # Files still on disk are authoritative for their current size. For
+    # Telegram backups that are removed after upload, persisted metadata keeps
+    # the count and latest-backup information available.
+    current_by_name = {item.name: (size, mtime) for item, size, mtime in archives}
+    merged = []
+    seen = set()
+    for item in history:
+        name = str(item.get("name") or "")
+        if not name or name in seen:
+            continue
+        size = int(item.get("size") or 0)
+        mtime = float(item.get("mtime") or 0)
+        if name in current_by_name:
+            size, mtime = current_by_name[name]
+        merged.append((name, max(0, size), mtime))
+        seen.add(name)
+    for item, size, mtime in archives:
+        if item.name not in seen:
+            merged.append((item.name, size, mtime))
+            seen.add(item.name)
+    merged.sort(key=lambda x: x[2], reverse=True)
+
+    total = sum(size for _, size, _ in merged)
+    latest = merged[0] if merged else None
     return {
-        "count": len(archives),
+        "count": len(merged),
         "size": _format_bytes(total),
-        "latest": latest_name,
-        "latest_time": latest_time,
+        "latest": latest[0] if latest else "هنوز Backup ساخته نشده",
+        "latest_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(latest[2])) if latest else "—",
         "latest_mtime": latest[2] if latest else 0,
     }
 
@@ -576,35 +640,155 @@ def _pg_api_token():
     return str(payload.get("access_token") or "")
 
 
-def get_panel_storage_usage():
-    """Return PasarGuard's total traffic from its own system API.
+def _pg_json_get(path, token):
+    req = urllib.request.Request(
+        _pg_api_base() + path,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": "idontPG-backup/5.5.4",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
 
-    This intentionally does NOT use disk usage from /opt/pasarguard or
-    /var/lib/pasarguard.  PasarGuard exposes traffic as incoming/outgoing
-    bandwidth through GET /api/system/users; their sum is shown as the
-    panel's total traffic usage.
+
+def _extract_number(value):
+    try:
+        if isinstance(value, bool):
+            return 0
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sum_user_traffic(payload):
+    """Extract total user traffic from common PasarGuard API list shapes."""
+    if isinstance(payload, dict):
+        # Some API versions wrap users in `users`, `items` or `data`.
+        for key in ("users", "items", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return _sum_user_traffic(value)
+        data = payload.get("data")
+        if isinstance(data, (list, dict)):
+            nested = _sum_user_traffic(data)
+            if nested > 0 or isinstance(data, list):
+                return nested
+        # Prefer a direct system-wide metric when available.
+        for key in ("total_traffic", "traffic_usage", "used_traffic", "total_used_traffic"):
+            if key in payload and isinstance(payload[key], (int, float, str)):
+                return _extract_number(payload[key])
+        return 0
+    if not isinstance(payload, list):
+        return 0
+    total = 0
+    for user in payload:
+        if not isinstance(user, dict):
+            continue
+        # PasarGuard user objects expose used_traffic; accept a few historical
+        # aliases without recursively summing unrelated nested values.
+        if "used_traffic" in user:
+            total += _extract_number(user.get("used_traffic"))
+        elif "traffic_used" in user:
+            total += _extract_number(user.get("traffic_used"))
+        elif "data_usage" in user:
+            total += _extract_number(user.get("data_usage"))
+        else:
+            uplink = user.get("uplink", user.get("upload", user.get("incoming_bandwidth", 0)))
+            downlink = user.get("downlink", user.get("download", user.get("outgoing_bandwidth", 0)))
+            total += _extract_number(uplink) + _extract_number(downlink)
+    return total
+
+
+def _users_page(payload):
+    """Return (users, reported_total) from the PasarGuard users response."""
+    if isinstance(payload, list):
+        return [u for u in payload if isinstance(u, dict)], None
+    if not isinstance(payload, dict):
+        return [], None
+
+    users = payload.get("users")
+    if not isinstance(users, list):
+        users = payload.get("items")
+    if not isinstance(users, list):
+        data = payload.get("data")
+        if isinstance(data, dict):
+            users = data.get("users") or data.get("items")
+        elif isinstance(data, list):
+            users = data
+    if not isinstance(users, list):
+        users = []
+
+    total = None
+    for key in ("total", "count", "total_count"):
+        value = payload.get(key)
+        if value is None and isinstance(payload.get("data"), dict):
+            value = payload["data"].get(key)
+        try:
+            if value is not None:
+                total = int(value)
+                break
+        except (TypeError, ValueError):
+            pass
+    return [u for u in users if isinstance(u, dict)], total
+
+
+def _sum_all_panel_users(token):
+    """Sum current `used_traffic` for every PasarGuard user.
+
+    PasarGuard returns users through a paginated /api/users endpoint. Reading
+    only the first page makes the dashboard show a small/incorrect total on
+    installations with many users, so walk every page explicitly.
     """
+    total_used = 0
+    offset = 0
+    limit = 100
+    seen_pages = set()
+
+    while offset < 100000:
+        path = f"/users?limit={limit}&offset={offset}&load_sub=true"
+        payload = _pg_json_get(path, token)
+        users, reported_total = _users_page(payload)
+        marker = (offset, len(users), reported_total)
+        if marker in seen_pages:
+            break
+        seen_pages.add(marker)
+
+        for user in users:
+            value = user.get("used_traffic")
+            if value is None:
+                value = user.get("traffic_used")
+            if value is None:
+                value = user.get("data_usage")
+            total_used += _extract_number(value)
+
+        if not users:
+            break
+        offset += len(users)
+
+        if reported_total is not None and offset >= reported_total:
+            break
+        if len(users) < limit and reported_total is None:
+            break
+
+    return total_used
+
+
+def get_panel_storage_usage():
+    """Return the total current traffic consumed by all PasarGuard users."""
     try:
         token = _pg_api_token()
         if not token:
             return "قابل دریافت نیست"
-        req = urllib.request.Request(
-            _pg_api_base() + "/system/users",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "User-Agent": "idontPG-backup/5.5.4",
-            },
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=4) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        incoming = int(data.get("incoming_bandwidth") or 0)
-        outgoing = int(data.get("outgoing_bandwidth") or 0)
-        return _format_bytes(incoming + outgoing)
+
+        # The users endpoint is the authoritative panel-side source for
+        # `used_traffic`; summing every page avoids the old first-page bug.
+        total = _sum_all_panel_users(token)
+        return _format_bytes(total)
     except Exception:
         return "قابل دریافت نیست"
-
 
 
 def get_disk_info():
@@ -649,13 +833,47 @@ def get_server_resource_usage():
     disk=float(get_disk_info().get("percent",0) or 0)
     return {"cpu":round(cpu,1),"ram":round(ram,1),"disk":round(max(0,min(100,disk)),1)}
 
+
+
+# ── Neon UI icon system (v5.5.4) ───────────────────────────────────────
+_UI_ICONS = {
+    "cpu": '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9 2.8v3M12 2.8v3M15 2.8v3M9 18.2v3M12 18.2v3M15 18.2v3M2.8 9h3M2.8 12h3M2.8 15h3M18.2 9h3M18.2 12h3M18.2 15h3"/><rect x="10" y="10" width="4" height="4" rx=".7"/></svg>',
+    "ram": '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="7" width="17" height="10" rx="2"/><path d="M7 10v4M10 10v4M14 10v4M17 10v4M6 4.5v2.5M10 4.5v2.5M14 4.5v2.5M18 4.5v2.5M6 17v2.5M10 17v2.5M14 17v2.5M18 17v2.5"/></svg>',
+    "disk": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16l1.5 4v7A2.5 2.5 0 0 1 19 21H5a2.5 2.5 0 0 1-2.5-2.5v-7L4 7.5Z"/><path d="M4 7.5 6 3h12l2 4.5M7 15h10M8 18h.01"/></svg>',
+    "traffic": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/><path d="M10 8h5M9 16h6"/></svg>',
+    "backup": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14l1.5 3v9A2 2 0 0 1 18.5 21h-13A2 2 0 0 1 3.5 19v-9L5 7Z"/><path d="M6 7 8 3h8l2 4M8 14h8M10 17h4"/></svg>',
+    "panel": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5.5c0 4.5-2.8 7.5-7 9.5-4.2-2-7-5-7-9.5V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg>',
+    "telegram": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 4-3 16-6-5-3.5 3.5.7-5.1L5 11l16-7Z"/><path d="m9.2 13.4 8.5-6.1"/></svg>',
+    "settings": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M5.9 5.9l2.1 2.1M16 16l2.1 2.1M18.1 5.9 16 8M8 16l-2.1 2.1"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1.2"/></svg>',
+    "account": '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.8-3.3 3-5 6.5-5s5.7 1.7 6.5 5"/><path d="M17.5 14.5 20 17l-2.5 2.5"/></svg>',
+    "dashboard": '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>',
+    "test": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 4-3 16-6-5-3.5 3.5.7-5.1L5 11l16-7Z"/><path d="M5 11 2.5 9.5"/></svg>',
+    "clock": '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg>',
+    "health": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg>',
+    "chart": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-8"/><path d="M3 19h18"/></svg>',
+    "activity": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>',
+    "download": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M8 11l4 4 4-4M5 20h14"/></svg>',
+    "trash": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v7M12 10v7M16 10v7M6 7l1 14h10l1-14"/></svg>',
+    "rocket": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4c3-2 6-1 6-1s1 3-1 6l-5 5-4-4 4-6Z"/><path d="m10 10-4 1-3 3 5 1M14 14l-1 4-3 3-1-5M8 16l-3 3"/></svg>',
+    "link": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5M7.5 17.5l-2 2a4 4 0 0 1-5-5l3-3a4 4 0 0 1 5-1M16.5 6.5l2-2a4 4 0 0 1 5 5l-3 3a4 4 0 0 1-5 1"/></svg>',
+}
+
+def ui_icon(name, extra=""):
+    return f'<span class="neo-icon {extra}" aria-hidden="true">{_UI_ICONS.get(name, _UI_ICONS["activity"])}</span>'
+
+def status_dot(state="ok"):
+    return f'<span class="status-dot status-{html.escape(str(state))}" aria-hidden="true"></span>'
+
+def status_badge(label, state="ok"):
+    return f'<span class="status status-{html.escape(str(state))}">{status_dot(state)}<span>{html.escape(str(label))}</span></span>'
+
 def _resource_chart_html():
     usage=get_server_resource_usage()
     chart = '''<div class="resource-monitor" id="resourceMonitor">
   <div class="resource-summary">
-    <div class="resource-stat cpu"><span class="rs-icon">⚡</span><div><small>CPU LOAD</small><strong id="cpuValue">CPUVAL%</strong></div><i></i></div>
-    <div class="resource-stat ram"><span class="rs-icon">◈</span><div><small>RAM USED</small><strong id="ramValue">RAMVAL%</strong></div><i></i></div>
-    <div class="resource-stat disk"><span class="rs-icon">◉</span><div><small>DISK USED</small><strong id="diskValue">DISKVAL%</strong></div><i></i></div>
+    <div class="resource-stat cpu">{ui_icon("cpu")}<div><small>CPU LOAD</small><strong id="cpuValue">CPUVAL%</strong></div><i></i></div>
+    <div class="resource-stat ram">{ui_icon("ram")}<div><small>RAM USED</small><strong id="ramValue">RAMVAL%</strong></div><i></i></div>
+    <div class="resource-stat disk">{ui_icon("disk")}<div><small>DISK USED</small><strong id="diskValue">DISKVAL%</strong></div><i></i></div>
   </div>
   <div class="resource-plot">
     <div class="plot-head"><div><span class="plot-kicker">LIVE TELEMETRY</span><b>وضعیت لحظه‌ای سرور</b></div><span class="live-dot"><i></i> LIVE</span></div>
@@ -693,18 +911,52 @@ def _resource_chart_html():
   setInterval(refresh,3000);
 })();
 </script>'''
-    chart=chart.replace('CPUVAL',f'{usage["cpu"]:.1f}').replace('RAMVAL',f'{usage["ram"]:.1f}').replace('DISKVAL',f'{usage["disk"]:.1f}')
+    chart=chart.replace('{ui_icon("cpu")}',ui_icon('cpu')).replace('{ui_icon("ram")}',ui_icon('ram')).replace('{ui_icon("disk")}',ui_icon('disk')).replace('CPUVAL',f'{usage["cpu"]:.1f}').replace('RAMVAL',f'{usage["ram"]:.1f}').replace('DISKVAL',f'{usage["disk"]:.1f}')
     return chart
 
 def get_health_info(c,panel_info=None):
     panel_info=panel_info or get_panel_info(); scheduler=scheduler_status(); telegram_ok=bool(c.get('token') and c.get('chat')); disk=get_disk_info()
     return [('Web Panel',True,'در حال اجرا'),('PasarGuard',panel_info.get('status')=='Online',panel_info.get('status','Unknown')),('Telegram',telegram_ok,'تنظیم شده' if telegram_ok else 'تنظیم نشده'),('Scheduler',scheduler=='active','فعال' if scheduler=='active' else 'متوقف'),('Disk',float(disk.get('percent',0))<90,f"{disk.get('percent',0)}% استفاده")]
 
+def _backup_history_records():
+    """Merge persisted backup metadata with archives still present on disk."""
+    archives = _backup_archives()
+    current = {item.name: (size, mtime) for item, size, mtime in archives}
+    records = []
+    seen = set()
+    try:
+        raw = json.loads(BACKUP_HISTORY_FILE.read_text(encoding="utf-8")) if BACKUP_HISTORY_FILE.is_file() else []
+        history = raw if isinstance(raw, list) else []
+    except Exception:
+        history = []
+
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if not name or name in seen:
+            continue
+        size = int(item.get("size") or 0)
+        mtime = float(item.get("mtime") or 0)
+        if name in current:
+            size, mtime = current[name]
+        records.append((name, max(0, size), mtime))
+        seen.add(name)
+
+    for item, size, mtime in archives:
+        if item.name not in seen:
+            records.append((item.name, size, mtime))
+            seen.add(item.name)
+
+    records.sort(key=lambda x: x[2], reverse=True)
+    return records
+
+
 def get_backup_chart():
-    now=time.time(); archives=_backup_archives(); buckets=[]
+    now=time.time(); records=_backup_history_records(); buckets=[]
     for days in range(6,-1,-1):
         start=now-(days+1)*86400; end=now-days*86400
-        total=sum(size for _,size,mtime in archives if start<=mtime<end)
+        total=sum(size for _,size,mtime in records if start<=mtime<end)
         buckets.append((time.strftime('%m/%d',time.localtime(end-1)),total))
     peak=max((v for _,v in buckets),default=0) or 1
     return [(label,size,round(size/peak*100)) for label,size in buckets]
@@ -728,7 +980,8 @@ body.light{--bg:#fff1f8;--text:#26162d;--muted:#735c78;--line:rgba(124,58,237,.1
 *{box-sizing:border-box}html{min-height:100%;background:#06070d}body{margin:0;min-height:100vh;color:var(--text);font-family:"Vazirmatn","Tahoma","Segoe UI",sans-serif;overflow-x:hidden;background:radial-gradient(circle at 15% 15%,rgba(139,92,246,.18),transparent 30%),radial-gradient(circle at 85% 10%,rgba(34,211,238,.14),transparent 28%),radial-gradient(circle at 70% 90%,rgba(236,72,153,.12),transparent 32%),#06070d;transition:background .45s ease,color .35s ease}body.light{background:radial-gradient(circle at 8% 12%,rgba(168,85,247,.30),transparent 30%),radial-gradient(circle at 88% 14%,rgba(236,72,153,.27),transparent 30%),radial-gradient(circle at 70% 92%,rgba(239,68,68,.23),transparent 34%),linear-gradient(135deg,#fff7fc 0%,#fdf1ff 42%,#fff1f6 72%,#fff5f0 100%);background-size:180% 180%;animation:lightBg 18s ease-in-out infinite alternate}@keyframes lightBg{0%{background-position:0% 0%}100%{background-position:100% 100%}}
 body.light:before,body.light:after{opacity:.55}body:before,body:after{content:"";position:fixed;z-index:-2;width:42vw;height:42vw;border-radius:50%;filter:blur(75px);opacity:.38;animation:float 16s ease-in-out infinite alternate;pointer-events:none}body:before{background:#7c3aed;left:-12vw;top:10vh}body:after{background:#06b6d4;right:-12vw;bottom:0}@keyframes float{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(5vw,-3vh,0) scale(1.16)}}
 .aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}.orb{position:absolute;border-radius:999px;filter:blur(50px);opacity:.28;mix-blend-mode:screen;animation:drift 18s infinite alternate ease-in-out}.o1{width:30vw;height:30vw;background:#8b5cf6;left:5%;top:18%;animation-duration:20s}.o2{width:25vw;height:25vw;background:#06b6d4;right:4%;top:25%;animation-duration:24s}.o3{width:24vw;height:24vw;background:#ec4899;left:35%;bottom:-8%;animation-duration:22s}.light .o1{background:#a855f7}.light .o2{background:#ec4899}.light .o3{background:#ef4444}@keyframes drift{to{transform:translate(8vw,-5vh) rotate(25deg) scale(1.2)}}
-.container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.activity-list{display:grid;gap:9px}.activity-list .meta-row{margin:0}.activity-bad{border-color:rgba(251,113,133,.30)}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
+.container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .panel-brand-icon{overflow:hidden}.panel-brand-icon img{width:100%;height:100%;object-fit:contain;border-radius:inherit;filter:brightness(0) invert(1);padding:7px}.light .panel-brand-icon img{filter:none}
+.icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.activity-list{display:grid;gap:9px}.activity-list .meta-row{margin:0}.activity-bad{border-color:rgba(251,113,133,.30)}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
 
 /* v5.5.3 glass navigation drawer + mobile hero fix */
 .menu-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);cursor:pointer;font-size:21px;line-height:1;transition:.25s ease;display:inline-flex;align-items:center;justify-content:center}
@@ -746,7 +999,7 @@ body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.86),rgba(
 
 
 def page(title, body, logged=True, notice="", kind="ok"):
-    nav = "" if not logged else '''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>idontPG-backup</h3><p>Backup Control Center</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/"><span class="drawer-icon">🏠</span><span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram"><span class="drawer-icon">📨</span><span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings"><span class="drawer-icon">🛠️</span><span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test"><span class="drawer-icon">🧪</span><span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account"><span class="drawer-icon">👤</span><span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a><a class="drawer-link logout" href="/logout"><span class="drawer-icon">🚪</span><span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
+    nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>idontPG-backup</h3><p>Backup Control Center</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
     notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
     return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><title>{html.escape(title)} · {APP}</title><style>{CSS}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}
 
@@ -894,22 +1147,22 @@ class Handler(BaseHTTPRequestHandler):
             panel_url = html.escape(panel_info["url"])
             body = f'''<section class="hero"><h2>کنترل کامل <span class="gradient">Backup</span></h2><p>همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.</p></section>
 <div class="grid">
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">🛡️</div><div><h3 class="title">اطلاعات Backup</h3><p class="sub">Backup Information</p></div></div></div>
-<div class="meta"><div class="meta-row"><span>📦 تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>💾 حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>🕒 آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><div class="icon">🌐</div><div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status {panel_status_class}">{'● آنلاین' if panel_info['status'] == 'Online' else '○ آفلاین'}</span></div>
-<div class="meta"><div class="meta-row"><span>🔗 لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row"><span>🟢 وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span>💾 حجم استفاده‌شده</span><strong>{html.escape(panel_used)}</strong></div></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📨</div><div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div><span class="status {status_class}">{'● فعال' if status == 'active' else '○ متوقف'}</span></div>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">اطلاعات Backup</h3><p class="sub">Backup Information</p></div></div></div>
+<div class="meta"><div class="meta-row"><span>{ui_icon("backup", "meta-icon")} تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>{ui_icon("disk", "meta-icon")} حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0">{ui_icon("panel", "card-icon")}<div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status {panel_status_class}">{status_badge('آنلاین' if panel_info['status'] == 'Online' else 'آفلاین', 'ok' if panel_info['status'] == 'Online' else 'bad')}</span></div>
+<div class="meta"><div class="meta-row"><span>{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row"><span>{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span>{ui_icon("traffic", "meta-icon")} مصرف کلی پنل</span><strong>{html.escape(panel_used)}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("telegram", "card-icon")}<div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div><span class="status {status_class}">{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</span></div>
 <div class="meta"><div class="meta-row"><span>Bot Token</span><span>{html.escape(masked)}</span></div><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>بازه</span><span>{html.escape(str(c.get('interval','24')))} ساعت</span></div></div>
-<div class="actions"><a class="btn primary" href="/telegram">⚙️ تنظیمات Telegram</a><a class="btn" href="/test">🧪 ارسال تست</a></div></article>
-<article class="glass card backup-controls"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><div class="icon">⚙️</div><div style="min-width:0"><h3 class="title">تنظیمات Backup</h3><p class="sub">Backup Controls</p></div></div><span class="status {status_class}">{html.escape(status)}</span></div>
-<p class="empty">زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.</p><div class="actions backup-actions"><a class="btn primary" href="/backup-settings">مدیریت Backup</a><form method="post" action="/backup" style="display:flex;min-width:0">{hidden_csrf(self.sid())}<button class="btn good" type="submit">📦 Backup دستی</button></form></div></article>
-<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📡</div><div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">🧪 ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">⏱️</div><div><h3 class="title">Backup بعدی</h3><p class="sub">Next Scheduled Backup</p></div></div><span class="status {status_class}">{'● فعال' if status == 'active' else '○ متوقف'}</span></div><div class="meta"><div class="meta-row"><span>⏳ زمان باقی‌مانده</span><strong id="backupCountdown">{html.escape(str(_next_backup_seconds(c.get('interval','24'), backup_info.get('latest_mtime')) if status == 'active' else '—'))}</strong></div><div class="meta-row"><span>⚙️ وضعیت Scheduler</span><strong>{'فعال' if status == 'active' else 'متوقف'}</strong></div></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📜</div><div><h3 class="title">آخرین فعالیت‌ها</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">🩺</div><div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row"><span>{"🟢" if ok else "🔴"} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail in get_health_info(c,panel_info))}</div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">💽</div><div><h3 class="title">فضای دیسک</h3><p class="sub">Disk Monitor</p></div></div></div><div class="disk-meter"><div class="disk-bar"><span style="width:{get_disk_info()["percent"]}%"></span></div><div class="meta-row"><span>استفاده‌شده</span><strong>{html.escape(str(get_disk_info()["used"]))}</strong></div><div class="meta-row"><span>آزاد</span><strong>{html.escape(str(get_disk_info()["free"]))}</strong></div></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📈</div><div><h3 class="title">Backup هفت روز اخیر</h3><p class="sub">Backup Activity</p></div></div></div><div class="mini-chart">{''.join(f'<div class="chart-col"><div class="chart-value">{html.escape(_format_bytes(size)) if size else "0 B"}</div><div class="chart-bar"><span style="height:{pct}%"></span></div><small>{html.escape(label)}</small></div>' for label,size,pct in get_backup_chart())}</div><div class="actions"><a class="btn" href="/backups">📦 مدیریت Backupها</a></div></article>
-<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📊</div><div><h3 class="title">منابع سرور مجازی</h3><p class="sub">Live CPU · RAM · Disk usage</p></div></div></div>{_resource_chart_html()}</article>
+<div class="actions"><a class="btn primary" href="/telegram">{ui_icon("settings", "inline-icon")} تنظیمات Telegram</a><a class="btn" href="/test">{ui_icon("test", "inline-icon")} ارسال تست</a></div></article>
+<article class="glass card backup-controls"><div class="card-head"><div style="display:flex;gap:12px;min-width:0">{ui_icon("settings", "card-icon")}<div style="min-width:0"><h3 class="title">تنظیمات Backup</h3><p class="sub">Backup Controls</p></div></div><span class="status {status_class}">{html.escape(status)}</span></div>
+<p class="empty">زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.</p><div class="actions backup-actions"><a class="btn primary" href="/backup-settings">مدیریت Backup</a><form method="post" action="/backup" style="display:flex;min-width:0">{hidden_csrf(self.sid())}<button class="btn good" type="submit">{ui_icon("backup", "inline-icon")} Backup دستی</button></form></div></article>
+<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("test", "card-icon")}<div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">{ui_icon("test", "inline-icon")} ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">Backup بعدی</h3><p class="sub">Next Scheduled Backup</p></div></div><span class="status {status_class}">{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</span></div><div class="meta"><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} زمان باقی‌مانده</span><strong id="backupCountdown">{html.escape(str(_next_backup_seconds(c.get('interval','24'), backup_info.get('latest_mtime')) if status == 'active' else '—'))}</strong></div><div class="meta-row"><span>{ui_icon("settings", "meta-icon")} وضعیت Scheduler</span><strong>{'فعال' if status == 'active' else 'متوقف'}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("activity", "card-icon")}<div><h3 class="title">آخرین فعالیت‌ها</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("health", "card-icon")}<div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row"><span>{status_dot("ok" if ok else "bad")} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail in get_health_info(c,panel_info))}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("disk", "card-icon")}<div><h3 class="title">فضای دیسک</h3><p class="sub">Disk Monitor</p></div></div></div><div class="disk-meter"><div class="disk-bar"><span style="width:{get_disk_info()["percent"]}%"></span></div><div class="meta-row"><span>استفاده‌شده</span><strong>{html.escape(str(get_disk_info()["used"]))}</strong></div><div class="meta-row"><span>آزاد</span><strong>{html.escape(str(get_disk_info()["free"]))}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("chart", "card-icon")}<div><h3 class="title">Backup هفت روز اخیر</h3><p class="sub">Backup Activity</p></div></div></div><div class="mini-chart">{''.join(f'<div class="chart-col"><div class="chart-value">{html.escape(_format_bytes(size)) if size else "0 B"}</div><div class="chart-bar"><span style="height:{pct}%"></span></div><small>{html.escape(label)}</small></div>' for label,size,pct in get_backup_chart())}</div><div class="actions"><a class="btn" href="/backups">{ui_icon("backup", "inline-icon")} مدیریت Backupها</a></div></article>
+<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("chart", "card-icon")}<div><h3 class="title">منابع سرور مجازی</h3><p class="sub">Live CPU · RAM · Disk usage</p></div></div></div>{_resource_chart_html()}</article>
 </div>'''
             self.send_html(page("Dashboard", body)); return
 
@@ -917,8 +1170,8 @@ class Handler(BaseHTTPRequestHandler):
             archives=_backup_archives(); rows=[]
             for item,size,mtime in archives:
                 name=html.escape(item.name); q=urllib.parse.quote(item.name,safe="")
-                rows.append(f'<div class="backup-row"><div><strong>📦 {name}</strong><div class="sub">{html.escape(time.strftime("%Y-%m-%d %H:%M",time.localtime(mtime)))} · {html.escape(_format_bytes(size))}</div></div><div class="actions compact"><a class="btn" href="/backup-download?name={q}">⬇️ دانلود</a><form method="post" action="/backup-delete">{hidden_csrf(self.sid())}<input type="hidden" name="name" value="{name}"><button class="btn danger" type="submit">🗑️ حذف</button></form></div></div>')
-            body=f"""<section class="hero"><h2>📦 <span class="gradient">مدیریت Backupها</span></h2><p>Backupهای موجود را مشاهده، دانلود یا حذف کنید.</p></section><div class="glass wide"><div class="backup-list">{''.join(rows) or '<div class="empty">هنوز Backupای پیدا نشد.</div>'}</div><div class="actions"><a class="btn" href="/">← داشبورد</a><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn primary" type="submit">🚀 ساخت Backup جدید</button></form></div></div>"""
+                rows.append(f'<div class="backup-row"><div><strong>📦 {name}</strong><div class="sub">{html.escape(time.strftime("%Y-%m-%d %H:%M",time.localtime(mtime)))} · {html.escape(_format_bytes(size))}</div></div><div class="actions compact"><a class="btn" href="/backup-download?name={q}">{ui_icon("download", "inline-icon")} دانلود</a><form method="post" action="/backup-delete">{hidden_csrf(self.sid())}<input type="hidden" name="name" value="{name}"><button class="btn danger" type="submit">{ui_icon("trash", "inline-icon")} حذف</button></form></div></div>')
+            body=f"""<section class="hero"><h2>{ui_icon("backup", "hero-icon")} <span class="gradient">مدیریت Backupها</span></h2><p>Backupهای موجود را مشاهده، دانلود یا حذف کنید.</p></section><div class="glass wide"><div class="backup-list">{''.join(rows) or '<div class="empty">هنوز Backupای پیدا نشد.</div>'}</div><div class="actions"><a class="btn" href="/">← داشبورد</a><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ساخت Backup جدید</button></form></div></div>"""
             self.send_html(page("Backup Manager",body)); return
 
         if path == "/backup-download":
@@ -933,20 +1186,20 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required><div class="hint">حداقل ۸ کاراکتر، حداقل ۲ حرف انگلیسی، حداقل ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه مثل # @ *</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required><div class="hint">حداقل ۸ کاراکتر، حداقل ۲ حرف انگلیسی، حداقل ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه مثل # @ *</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Account", body)); return
 
         if path == "/telegram":
-            body = f'''<section class="hero"><h2>🤖 <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تنظیمات</button><a class="btn" href="/test">✈️ تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("telegram", "hero-icon")} <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button><a class="btn" href="/test">{ui_icon("test", "inline-icon")} تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Telegram Backup", body)); return
 
         if path == "/backup-settings":
             checked = "checked" if c.get("node") else ""
-            body = f'''<section class="hero"><h2>⚙️ تنظیمات <span class="gradient">Backup</span></h2><p>کنترل Scheduler و اجرای Backup دستی.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">⏳</div><div><h3 class="title">زمان‌بندی خودکار</h3><p class="sub">Scheduler</p></div></div><span class="status {'on' if status=='active' else 'off'}">{html.escape(status)}</span></div><form method="post" action="/backup-settings">{hidden_csrf(self.sid())}<div class="field"><label>بازه Backup (ساعت)</label><input name="interval" type="number" step="0.5" min="0.5" max="720" value="{html.escape(str(c.get('interval','24')))}" required></div><label class="toggle"><span>شامل PG-Node شود</span><input type="checkbox" name="node" {checked}></label><div class="actions"><button class="btn primary" type="submit">▶️ ذخیره و شروع</button><button class="btn danger" type="submit" formaction="/stop" formmethod="post">⏹️ توقف</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📦</div><div><h3 class="title">Backup دستی</h3><p class="sub">Manual Backup</p></div></div></div><p class="empty">همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.</p><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn good full">🚀 شروع Backup دستی</button></form></article></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("settings", "hero-icon")} تنظیمات <span class="gradient">Backup</span></h2><p>کنترل Scheduler و اجرای Backup دستی.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">زمان‌بندی خودکار</h3><p class="sub">Scheduler</p></div></div><span class="status {'on' if status=='active' else 'off'}">{html.escape(status)}</span></div><form method="post" action="/backup-settings">{hidden_csrf(self.sid())}<div class="field"><label>بازه Backup (ساعت)</label><input name="interval" type="number" step="0.5" min="0.5" max="720" value="{html.escape(str(c.get('interval','24')))}" required></div><label class="toggle"><span>شامل PG-Node شود</span><input type="checkbox" name="node" {checked}></label><div class="actions"><button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ذخیره و شروع</button><button class="btn danger" type="submit" formaction="/stop" formmethod="post">{ui_icon("activity", "inline-icon")} توقف</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">Backup دستی</h3><p class="sub">Manual Backup</p></div></div></div><p class="empty">همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.</p><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn good full">{ui_icon("rocket", "inline-icon")} شروع Backup دستی</button></form></article></div>'''
             self.send_html(page("Backup Settings", body)); return
 
         if path == "/test":
-            body = f'''<section class="hero"><h2>✈️ تست <span class="gradient">Telegram</span></h2><p>یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.</p></section><div class="glass wide"><div class="meta"><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>Proxy</span><span>{html.escape(c.get('proxy') or 'بدون Proxy')}</span></div></div><form method="post" action="/test">{hidden_csrf(self.sid())}<div class="actions"><button class="btn primary">🧪 ارسال پیام تست</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("test", "hero-icon")} تست <span class="gradient">Telegram</span></h2><p>یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.</p></section><div class="glass wide"><div class="meta"><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>Proxy</span><span>{html.escape(c.get('proxy') or 'بدون Proxy')}</span></div></div><form method="post" action="/test">{hidden_csrf(self.sid())}<div class="actions"><button class="btn primary">{ui_icon("test", "inline-icon")} ارسال پیام تست</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Telegram Test", body)); return
 
         self.send_html(page("404", '<div class="glass"><h2>404</h2><p class="empty">صفحه پیدا نشد.</p></div>'), 404)
@@ -1016,7 +1269,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/test":
             ok, msg = telegram_test(c)
             kind = "ok" if ok else "bad"
-            body = f'<div class="glass"><div class="notice {kind}">{"✅ پیام تست با موفقیت ارسال شد." if ok else "❌ ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
+            body = f'<div class="glass"><div class="notice {kind}">{status_dot("ok" if ok else "bad")} {"پیام تست با موفقیت ارسال شد." if ok else "ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
 
         if path == "/backup-settings":
@@ -1052,7 +1305,7 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = make_backup(send=True)
             except Exception as e:
                 ok, msg = False, str(e)
-            body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{("✅ Backup با موفقیت ساخته و ارسال شد." if ok else "❌ Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
+            body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{status_dot("ok" if ok else "bad")} {("Backup با موفقیت ساخته و ارسال شد." if ok else "Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Manual Backup", body)); return
 
         self.send_html(page("404", '<div class="glass"><h2>404</h2></div>'), 404)
@@ -1073,6 +1326,8 @@ def worker():
             if c.get("token") and c.get("chat"):
                 core = load_core()
                 archive = core.create_backup(bool(c.get("node", False)))
+                if archive and os.path.exists(archive):
+                    _record_backup_created(archive)
                 if archive:
                     ok, msg = send_archive(core, archive, c, f"idontPG-backup · Scheduled · {time.strftime('%Y-%m-%d %H:%M:%S')}")
                     print(("[+]" if ok else "[-]"), msg, flush=True)

@@ -1,4 +1,8 @@
 ## v5.5.4
+- Fixed PasarGuard total traffic calculation by reading every page of `/api/users` and summing each user's `used_traffic`.
+- Fixed scheduled backups not being recorded in dashboard backup history.
+- Fixed the seven-day Backup Activity chart so it also uses persisted backup history after Telegram upload removes the ZIP.
+- Kept the release version at 5.5.4.
 - Health Check dashboard
 - Backup manager with download/delete
 - Disk monitor
