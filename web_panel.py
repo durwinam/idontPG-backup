@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.5.3"
+VERSION = "5.5.4"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
 STATE_DIR = Path("/etc/idontPG-backup")
@@ -263,10 +263,17 @@ def send_archive(core, archive, c, caption):
 def make_backup(send=True):
     c = load_cfg()
     core = load_core()
-    archive = core.create_backup(bool(c.get("node", False)))
-    if not send:
-        return True, f"Backup ساخته شد: {archive}"
-    return send_archive(core, archive, c, f"idontPG-backup · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    try:
+        archive = core.create_backup(bool(c.get("node", False)))
+        if not send:
+            _record_activity("Backup دستی ساخته شد", "ok")
+            return True, f"Backup ساخته شد: {archive}"
+        ok, msg = send_archive(core, archive, c, f"idontPG-backup · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        _record_activity("Backup و ارسال به Telegram موفق بود" if ok else "Backup ساخته شد ولی ارسال Telegram ناموفق بود", "ok" if ok else "bad")
+        return ok, msg
+    except Exception as exc:
+        _record_activity("Backup ناموفق بود", "bad")
+        raise
 
 
 def scheduler_service(action):
@@ -423,58 +430,80 @@ def _directory_size(path):
 
 
 def _backup_archives():
-    """Find backup archives created by idontPG-backup.
-
-    Backups are created in the process working directory.  systemd normally
-    starts services with ``/`` as the working directory, while manual runs
-    may use /root or another project directory.  Check those locations and a
-    few safe, shallow data roots so the dashboard can see backups regardless
-    of how the scheduler/CLI was started.
-    """
-    roots = [
-        Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"),
-        Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup"),
-        Path("/usr/local/bin"), Path("/tmp"), Path("/home"),
-    ]
-    found = []
+    """Find retained idontPG-backup archives without recursively scanning the whole filesystem."""
+    candidates = [Path.cwd(), Path("/"), Path("/root"), Path("/opt/pasarguard"),
+                  Path("/var/lib/idontPG-backup"), Path("/usr/local/share/idontPG-backup")]
     seen = set()
-
-    def add(path):
+    found = []
+    for directory in candidates:
         try:
-            if not path.is_file() or not path.name.startswith("backup_") or path.suffix != ".zip":
-                return
-            st = path.stat()
-            key = (st.st_dev, st.st_ino)
-            if key in seen:
-                return
-            seen.add(key)
-            found.append((path, st.st_size, st.st_mtime))
-        except (OSError, ValueError):
-            pass
-
-    # Fast path: backups directly in the expected roots.
-    for root in roots:
-        try:
-            if root.is_dir():
-                for item in root.glob("backup_*.zip"):
-                    add(item)
-        except OSError:
-            pass
-
-    # Also cover backups in a shallow subdirectory (for example a dedicated
-    # backup directory configured by a systemd WorkingDirectory).  Do not
-    # recursively walk the whole filesystem.
-    for root in (Path("/opt"), Path("/var/lib"), Path("/usr/local/share"), Path("/home"), Path("/tmp")):
-        try:
-            if not root.is_dir():
+            if not directory.is_dir():
                 continue
-            for item in root.glob("*/backup_*.zip"):
-                add(item)
+            for item in directory.glob("backup_*.zip"):
+                try:
+                    stat = item.stat()
+                    key = (stat.st_dev, stat.st_ino)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append((item, stat.st_size, stat.st_mtime))
+                except OSError:
+                    continue
         except OSError:
-            pass
-
+            continue
     found.sort(key=lambda x: x[2], reverse=True)
     return found
+
+
+ACTIVITY_FILE = STATE_DIR / "activities.json"
+
+def _record_activity(message, kind="ok"):
+    """Keep a tiny rolling activity history for the dashboard."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        items = []
+        if ACTIVITY_FILE.is_file():
+            try:
+                items = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
+                if not isinstance(items, list): items = []
+            except Exception:
+                items = []
+        items.insert(0, {"time": time.time(), "message": str(message), "kind": str(kind)})
+        ACTIVITY_FILE.write_text(json.dumps(items[:5], ensure_ascii=False), encoding="utf-8")
+        try: ACTIVITY_FILE.chmod(0o600)
+        except OSError: pass
+    except Exception:
+        pass
+
+def get_recent_activities():
+    """Return up to five recent dashboard activities."""
+    items = []
+    try:
+        if ACTIVITY_FILE.is_file():
+            raw = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, list): items = raw[:5]
+    except Exception:
+        pass
+    return items
+
+def _next_backup_seconds(interval_hours, latest_mtime):
+    try:
+        interval = max(0.5, float(interval_hours)) * 3600
+        if not latest_mtime:
+            return int(interval)
+        return max(0, int(latest_mtime + interval - time.time()))
+    except Exception:
+        return None
+
+def _relative_time(ts):
+    try:
+        delta=max(0,int(time.time()-float(ts)))
+        if delta < 60: return "همین الان"
+        if delta < 3600: return f"{delta//60} دقیقه پیش"
+        if delta < 86400: return f"{delta//3600} ساعت پیش"
+        return f"{delta//86400} روز پیش"
+    except Exception:
+        return "—"
 
 def get_backup_info():
     """Return useful information about retained backup archives."""
@@ -488,6 +517,7 @@ def get_backup_info():
         "size": _format_bytes(total),
         "latest": latest_name,
         "latest_time": latest_time,
+        "latest_mtime": latest[2] if latest else 0,
     }
 
 
@@ -495,10 +525,189 @@ def get_backup_storage_usage():
     return get_backup_info()["size"]
 
 
+def _pg_env_value(key):
+    """Read a PasarGuard .env value without requiring python-dotenv."""
+    for env_path in (Path("/opt/pasarguard/.env"), Path("/opt/pasarguard/.env.local")):
+        try:
+            if not env_path.is_file():
+                continue
+            for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() != key:
+                    continue
+                v = v.strip().strip("\"").strip("'")
+                return v
+        except OSError:
+            continue
+    return os.environ.get(key, "")
+
+
+def _pg_api_base():
+    """Build the local PasarGuard API base URL from its .env configuration."""
+    port = _pg_env_value("UVICORN_PORT") or "8000"
+    root = (_pg_env_value("UVICORN_ROOT_PATH") or "").strip().rstrip("/")
+    # The local HTTP endpoint avoids DNS/Cloudflare and works even when the
+    # public panel URL uses a domain or HTTPS certificate.
+    return f"http://127.0.0.1:{port}{root}/api"
+
+
+def _pg_api_token():
+    """Authenticate to PasarGuard using its configured sudo/admin account."""
+    username = _pg_env_value("SUDO_USERNAME")
+    password = _pg_env_value("SUDO_PASSWORD")
+    if not username or not password:
+        return ""
+    data = urllib.parse.urlencode({
+        "username": username,
+        "password": password,
+        "grant_type": "password",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        _pg_api_base() + "/admin/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=4) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return str(payload.get("access_token") or "")
+
+
 def get_panel_storage_usage():
-    """Actual PasarGuard data footprint: application + persistent data."""
-    total = _directory_size("/opt/pasarguard") + _directory_size("/var/lib/pasarguard")
-    return _format_bytes(total)
+    """Return PasarGuard's total traffic from its own system API.
+
+    This intentionally does NOT use disk usage from /opt/pasarguard or
+    /var/lib/pasarguard.  PasarGuard exposes traffic as incoming/outgoing
+    bandwidth through GET /api/system/users; their sum is shown as the
+    panel's total traffic usage.
+    """
+    try:
+        token = _pg_api_token()
+        if not token:
+            return "قابل دریافت نیست"
+        req = urllib.request.Request(
+            _pg_api_base() + "/system/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "idontPG-backup/5.5.4",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=4) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        incoming = int(data.get("incoming_bandwidth") or 0)
+        outgoing = int(data.get("outgoing_bandwidth") or 0)
+        return _format_bytes(incoming + outgoing)
+    except Exception:
+        return "قابل دریافت نیست"
+
+
+
+def get_disk_info():
+    try:
+        st=os.statvfs(str(STATE_DIR if STATE_DIR.exists() else Path('/')))
+        total=st.f_blocks*st.f_frsize; free=st.f_bavail*st.f_frsize; used=max(0,total-free)
+        percent=(used/total*100) if total else 0
+        return {'used':_format_bytes(used),'free':_format_bytes(free),'total':_format_bytes(total),'percent':min(100,max(0,round(percent,1)))}
+    except Exception:
+        return {'used':'—','free':'—','total':'—','percent':0}
+
+def _cpu_times():
+    try:
+        line=Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
+        vals=[int(x) for x in line.split()[1:]]
+        idle=vals[3]+(vals[4] if len(vals)>4 else 0)
+        total=sum(vals)
+        return total,idle
+    except Exception:
+        return None
+
+def get_server_resource_usage():
+    """Return live CPU, RAM and root-disk usage without external dependencies."""
+    cpu=0.0
+    a=_cpu_times()
+    if a:
+        time.sleep(0.12)
+        b=_cpu_times()
+        if b:
+            total=b[0]-a[0]; idle=b[1]-a[1]
+            if total>0:
+                cpu=max(0.0,min(100.0,(total-idle)*100.0/total))
+    ram=0.0
+    try:
+        mem={}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            k,v=line.split(":",1); mem[k]=int(v.strip().split()[0])
+        total=mem.get("MemTotal",0); avail=mem.get("MemAvailable",mem.get("MemFree",0))
+        if total>0: ram=max(0.0,min(100.0,(total-avail)*100.0/total))
+    except Exception:
+        pass
+    disk=float(get_disk_info().get("percent",0) or 0)
+    return {"cpu":round(cpu,1),"ram":round(ram,1),"disk":round(max(0,min(100,disk)),1)}
+
+def _resource_chart_html():
+    usage=get_server_resource_usage()
+    chart = '''<div class="resource-monitor" id="resourceMonitor">
+  <div class="resource-summary">
+    <div class="resource-stat cpu"><span class="rs-icon">⚡</span><div><small>CPU LOAD</small><strong id="cpuValue">CPUVAL%</strong></div><i></i></div>
+    <div class="resource-stat ram"><span class="rs-icon">◈</span><div><small>RAM USED</small><strong id="ramValue">RAMVAL%</strong></div><i></i></div>
+    <div class="resource-stat disk"><span class="rs-icon">◉</span><div><small>DISK USED</small><strong id="diskValue">DISKVAL%</strong></div><i></i></div>
+  </div>
+  <div class="resource-plot">
+    <div class="plot-head"><div><span class="plot-kicker">LIVE TELEMETRY</span><b>وضعیت لحظه‌ای سرور</b></div><span class="live-dot"><i></i> LIVE</span></div>
+    <div class="plot-body">
+      <div class="y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div>
+      <svg class="telemetry" id="telemetryChart" viewBox="0 0 900 300" preserveAspectRatio="none" role="img" aria-label="نمودار لحظه‌ای منابع سرور">
+        <defs>
+          <linearGradient id="fillCpu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6ee7ff" stop-opacity=".30"/><stop offset="1" stop-color="#6ee7ff" stop-opacity="0"/></linearGradient>
+          <linearGradient id="fillRam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4fa3" stop-opacity=".24"/><stop offset="1" stop-color="#ff4fa3" stop-opacity="0"/></linearGradient>
+          <linearGradient id="fillDisk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9b4a" stop-opacity=".20"/><stop offset="1" stop-color="#ff9b4a" stop-opacity="0"/></linearGradient>
+          <filter id="glowC"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="glowP"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <g class="grid-lines"><line x1="0" y1="0" x2="900" y2="0"/><line x1="0" y1="75" x2="900" y2="75"/><line x1="0" y1="150" x2="900" y2="150"/><line x1="0" y1="225" x2="900" y2="225"/><line x1="0" y1="300" x2="900" y2="300"/></g>
+        <path id="cpuArea" class="area cpu-area"></path><path id="ramArea" class="area ram-area"></path><path id="diskArea" class="area disk-area"></path>
+        <path id="cpuLine" class="line cpu-line"></path><path id="ramLine" class="line ram-line"></path><path id="diskLine" class="line disk-line"></path>
+        <circle id="cpuDot" class="dot cpu-dot" r="5"></circle><circle id="ramDot" class="dot ram-dot" r="5"></circle><circle id="diskDot" class="dot disk-dot" r="5"></circle>
+      </svg>
+      <div class="chart-legend"><span class="legend cpu"><i></i> CPU</span><span class="legend ram"><i></i> RAM</span><span class="legend disk"><i></i> Disk</span><span class="updated" id="resourceUpdated">اکنون</span></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const el=document.getElementById('resourceMonitor'); if(!el) return;
+  const initial={cpu:CPUVAL,ram:RAMVAL,disk:DISKVAL};
+  const history=Array.from({length:24},()=>({cpu:initial.cpu,ram:initial.ram,disk:initial.disk}));
+  function path(values){const n=values.length,w=900,h=300;return values.map((v,i)=>{const x=i*(w/(n-1)),y=h-(Math.max(0,Math.min(100,v))/100)*h;return (i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)}).join(' ')}
+  function area(values){return path(values)+' L 900 300 L 0 300 Z'}
+  function point(values){const v=values[values.length-1],x=900,y=300-(Math.max(0,Math.min(100,v))/100)*300;return [x,y]}
+  function render(){['cpu','ram','disk'].forEach(k=>{const vals=history.map(x=>x[k]);document.getElementById(k+'Line').setAttribute('d',path(vals));document.getElementById(k+'Area').setAttribute('d',area(vals));const pt=point(vals),dot=document.getElementById(k+'Dot');dot.setAttribute('cx',pt[0]);dot.setAttribute('cy',pt[1]);});}
+  function setVals(u){['cpu','ram','disk'].forEach(k=>document.getElementById(k+'Value').textContent=Number(u[k]).toFixed(1)+'%');history.push({cpu:Number(u.cpu),ram:Number(u.ram),disk:Number(u.disk)});history.shift();render();document.getElementById('resourceUpdated').textContent='به‌روزرسانی: '+new Date().toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+  render();
+  async function refresh(){try{const r=await fetch('/api/resources',{cache:'no-store',credentials:'same-origin'});if(!r.ok) throw new Error('status');setVals(await r.json());}catch(e){}}
+  setInterval(refresh,3000);
+})();
+</script>'''
+    chart=chart.replace('CPUVAL',f'{usage["cpu"]:.1f}').replace('RAMVAL',f'{usage["ram"]:.1f}').replace('DISKVAL',f'{usage["disk"]:.1f}')
+    return chart
+
+def get_health_info(c,panel_info=None):
+    panel_info=panel_info or get_panel_info(); scheduler=scheduler_status(); telegram_ok=bool(c.get('token') and c.get('chat')); disk=get_disk_info()
+    return [('Web Panel',True,'در حال اجرا'),('PasarGuard',panel_info.get('status')=='Online',panel_info.get('status','Unknown')),('Telegram',telegram_ok,'تنظیم شده' if telegram_ok else 'تنظیم نشده'),('Scheduler',scheduler=='active','فعال' if scheduler=='active' else 'متوقف'),('Disk',float(disk.get('percent',0))<90,f"{disk.get('percent',0)}% استفاده")]
+
+def get_backup_chart():
+    now=time.time(); archives=_backup_archives(); buckets=[]
+    for days in range(6,-1,-1):
+        start=now-(days+1)*86400; end=now-days*86400
+        total=sum(size for _,size,mtime in archives if start<=mtime<end)
+        buckets.append((time.strftime('%m/%d',time.localtime(end-1)),total))
+    peak=max((v for _,v in buckets),default=0) or 1
+    return [(label,size,round(size/peak*100)) for label,size in buckets]
 
 
 def csrf_token(sid):
@@ -519,7 +728,7 @@ body.light{--bg:#fff1f8;--text:#26162d;--muted:#735c78;--line:rgba(124,58,237,.1
 *{box-sizing:border-box}html{min-height:100%;background:#06070d}body{margin:0;min-height:100vh;color:var(--text);font-family:"Vazirmatn","Tahoma","Segoe UI",sans-serif;overflow-x:hidden;background:radial-gradient(circle at 15% 15%,rgba(139,92,246,.18),transparent 30%),radial-gradient(circle at 85% 10%,rgba(34,211,238,.14),transparent 28%),radial-gradient(circle at 70% 90%,rgba(236,72,153,.12),transparent 32%),#06070d;transition:background .45s ease,color .35s ease}body.light{background:radial-gradient(circle at 8% 12%,rgba(168,85,247,.30),transparent 30%),radial-gradient(circle at 88% 14%,rgba(236,72,153,.27),transparent 30%),radial-gradient(circle at 70% 92%,rgba(239,68,68,.23),transparent 34%),linear-gradient(135deg,#fff7fc 0%,#fdf1ff 42%,#fff1f6 72%,#fff5f0 100%);background-size:180% 180%;animation:lightBg 18s ease-in-out infinite alternate}@keyframes lightBg{0%{background-position:0% 0%}100%{background-position:100% 100%}}
 body.light:before,body.light:after{opacity:.55}body:before,body:after{content:"";position:fixed;z-index:-2;width:42vw;height:42vw;border-radius:50%;filter:blur(75px);opacity:.38;animation:float 16s ease-in-out infinite alternate;pointer-events:none}body:before{background:#7c3aed;left:-12vw;top:10vh}body:after{background:#06b6d4;right:-12vw;bottom:0}@keyframes float{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(5vw,-3vh,0) scale(1.16)}}
 .aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}.orb{position:absolute;border-radius:999px;filter:blur(50px);opacity:.28;mix-blend-mode:screen;animation:drift 18s infinite alternate ease-in-out}.o1{width:30vw;height:30vw;background:#8b5cf6;left:5%;top:18%;animation-duration:20s}.o2{width:25vw;height:25vw;background:#06b6d4;right:4%;top:25%;animation-duration:24s}.o3{width:24vw;height:24vw;background:#ec4899;left:35%;bottom:-8%;animation-duration:22s}.light .o1{background:#a855f7}.light .o2{background:#ec4899}.light .o3{background:#ef4444}@keyframes drift{to{transform:translate(8vw,-5vh) rotate(25deg) scale(1.2)}}
-.container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
+.container{width:min(1180px,calc(100% - 34px));margin:0 auto;padding:28px 0 56px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,.16);box-shadow:0 12px 40px rgba(34,211,238,.20),0 0 28px rgba(139,92,246,.16);transition:.25s ease}.brand-logo:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 16px 50px rgba(34,211,238,.30),0 0 36px rgba(139,92,246,.24)}.brand h1{font-size:21px;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);background:rgba(255,255,255,.05);backdrop-filter:blur(18px);padding:9px 13px;border-radius:999px;color:var(--muted);font-size:12px}.top-actions{display:flex;align-items:center;gap:9px}.theme-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.theme-toggle:hover{transform:translateY(-2px) rotate(4deg);border-color:rgba(236,72,153,.45);box-shadow:0 10px 30px rgba(236,72,153,.16)}.hero{margin-bottom:22px}.hero h2{font-size:clamp(30px,5vw,54px);line-height:1.02;margin:0 0 10px;letter-spacing:-1.8px}.gradient{background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{color:var(--muted);max-width:720px;margin:0;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.48))}.light .meta-row{background:rgba(255,255,255,.62)}.light .btn{background:rgba(255,255,255,.64);color:#17131f}.light .btn:hover{background:rgba(255,255,255,.86);color:#0f0b16}.light .toggle{background:rgba(255,255,255,.58);border-color:rgba(124,58,237,.18);color:#17131f}.light .notice{background:rgba(255,255,255,.62);color:#17131f}.light .gradient{background:linear-gradient(90deg,#17131f,#4c1d95,#9d174d,#991b1b);-webkit-background-clip:text;background-clip:text;color:transparent}.light .sub,.light .empty,.light .hint,.light .pill,.light .brand p,.light .footer,.light .meta-row span:first-child{color:#17131f}.light .status{color:#17131f}.light .status.on{color:#111827;background:rgba(52,211,153,.18)}.light .status.off{color:#17131f;background:rgba(124,58,237,.08)}.light .btn.good,.light .btn.danger{color:#111827}.light .field label,.light .field input,.light .field select{color:#17131f}.light .field input::placeholder,.light .field select::placeholder{color:#4b3f52}.light .field input,.light .field select{background:rgba(255,255,255,.64)}.light .btn.primary{color:#17131f;text-shadow:none}.light .notice.ok,.light .notice.bad{color:#17131f}.light .theme-toggle{color:#17131f}.light .icon{color:#17131f}.light .brand h1,.light .title{color:#17131f}.light .meta-row strong,.light .meta-row a,.light .meta-row span:last-child{color:#17131f}.hero h2{overflow-wrap:anywhere;word-break:break-word}.grid{overflow:visible}.glass{min-width:0;overflow:hidden;background:linear-gradient(145deg,var(--glass),rgba(255,255,255,.025));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:22px}.card{grid-column:span 6;min-width:0;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-4px);border-color:rgba(236,72,153,.42);box-shadow:0 28px 90px rgba(0,0,0,.5)}.wide{grid-column:span 12}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}.icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(139,92,246,.13);border:1px solid rgba(139,92,246,.2);font-size:21px}.title{font-size:18px;font-weight:750;margin:0 0 4px}.sub{font-size:12px;color:var(--muted);margin:0}.status{font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line)}.status.on{color:var(--good);background:rgba(52,211,153,.08)}.status.off{color:var(--muted)}.meta{display:grid;gap:10px;margin:18px 0}.meta-row{display:flex;justify-content:space-between;gap:12px;min-width:0;overflow:hidden;padding:11px 12px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);transition:.2s}.meta-row:hover{transform:translateX(-2px);border-color:rgba(236,72,153,.28)}.meta-row span:first-child{color:var(--muted);font-size:12px}.meta-row span:last-child,.meta-row strong,.meta-row a{font-size:12px;max-width:65%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.actions .btn{min-height:44px}.actions form{display:flex}.actions form .btn{height:100%}.btn{display:inline-flex;min-width:132px;max-width:100%;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px 15px;color:var(--text);text-decoration:none;font-weight:700;font-size:13px;cursor:pointer;background:var(--glass2);transition:.22s;position:relative;overflow:hidden;white-space:normal;text-align:center}.btn:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 20%,rgba(255,255,255,.18),transparent 80%);transform:translateX(-120%);transition:.55s}.btn:hover:before{transform:translateX(120%)}.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14);border-color:rgba(236,72,153,.28);box-shadow:0 10px 24px rgba(124,58,237,.16)}.btn:active{transform:translateY(0) scale(.98)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,#7c3aed,#db2777,#ef4444);background-size:180% 180%;animation:buttonGlow 6s ease infinite;box-shadow:0 10px 28px rgba(219,39,119,.22)}@keyframes buttonGlow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}.btn.good{border-color:rgba(52,211,153,.2);background:rgba(52,211,153,.09);color:#b7f7dc}.btn.danger{border-color:rgba(251,113,133,.2);background:rgba(251,113,133,.08);color:#fecdd3}.btn.full{width:100%}form{margin:0}.field{margin-bottom:16px}.field label{display:block;font-size:12px;color:var(--text);margin-bottom:7px}.field input,.field select{width:100%;border:1px solid var(--line);background:var(--glass2);color:var(--text);border-radius:14px;padding:13px 14px;outline:none;font-size:13px}.field input:focus,.field select:focus{border-color:rgba(103,232,249,.65);box-shadow:0 0 0 4px rgba(34,211,238,.08)}.hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6}.toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border-radius:16px;background:rgba(0,0,0,.14);border:1px solid rgba(255,255,255,.07);margin-bottom:14px}.toggle input{accent-color:#db2777;width:18px;height:18px}.notice{margin-bottom:16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.055);color:#dbeafe}.notice.ok{border-color:rgba(52,211,153,.25);background:rgba(52,211,153,.07)}.notice.bad{border-color:rgba(251,113,133,.25);background:rgba(251,113,133,.07)}.footer{text-align:center;color:#667085;font-size:11px;padding-top:28px}.login{width:min(460px,100%);margin:9vh auto}.login .glass{padding:30px}.empty{color:var(--muted);font-size:13px;line-height:1.7}.activity-list{display:grid;gap:9px}.activity-list .meta-row{margin:0}.activity-bad{border-color:rgba(251,113,133,.30)}.backup-controls .card-head{min-width:0}.backup-controls .empty{max-width:100%;overflow-wrap:anywhere}.backup-actions{width:100%;min-width:0}.backup-actions .btn{min-width:0;max-width:100%}.backup-actions form{min-width:0;max-width:100%}.backup-actions form .btn{min-width:0}@media(min-width:801px){.backup-actions .btn{min-width:0}.backup-actions form{flex:1}.backup-actions form .btn{width:100%}.backup-actions>a.btn{flex:1}}@media(max-width:800px){.top-actions{margin-right:auto}.actions .btn,.actions form{width:100%}.actions form .btn{width:100%}.card,.wide{grid-column:span 12}.topbar{align-items:flex-start}.pill{display:none}.container{width:calc(100% - 22px);max-width:1180px;padding-top:18px;min-width:0}.glass{border-radius:20px;padding:18px}.grid{grid-template-columns:minmax(0,1fr);width:100%;}.card,.wide{grid-column:1/-1;width:100%;}.topbar{flex-wrap:wrap;}.top-actions{margin-right:0;}.actions{min-width:0;}.meta-row a,.meta-row span:last-child,.meta-row strong{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.brand{min-width:0;}.brand>div{min-width:0;}}
 
 /* v5.5.3 glass navigation drawer + mobile hero fix */
 .menu-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);cursor:pointer;font-size:21px;line-height:1;transition:.25s ease;display:inline-flex;align-items:center;justify-content:center}
@@ -564,7 +773,7 @@ def page(title, body, logged=True, notice="", kind="ok"):
 @media (max-width: 720px) {{
   .btn, button, input[type="submit"] {{ width: 100%; }}
 }}
-</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>Backup Control Center · durwinam</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><button class="theme-toggle" id="themeToggle" type="button" aria-label="تغییر تم" title="تغییر تم">🌙</button><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");function apply(t){{root.classList.toggle("light",t==="light");if(btn){{btn.textContent=t==="light"?"🌙":"☀️";btn.title=t==="light"?"فعال‌سازی تم دارک":"فعال‌سازی تم لایت"}}}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}apply(t);if(btn)btn.addEventListener("click",function(){{t=root.classList.contains("light")?"dark":"light";apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}}});const meta=document.querySelector('meta[name="theme-color"]');if(meta){{const obs=new MutationObserver(function(){{meta.setAttribute("content",root.classList.contains("light")?"#fff1f8":"#06070d")}});obs.observe(root,{{attributes:true,attributeFilter:["class"]}});meta.setAttribute("content",root.classList.contains("light")?"#fff1f8":"#06070d")}}const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});}})();</script></body></html>'''
+.backup-row{{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}}.backup-row:last-child{{border-bottom:0}}.compact{{margin:0!important;gap:8px}}.compact form{{margin:0}}.btn.danger{{border-color:rgba(239,68,68,.35)}}.health-list .meta-row strong{{font-size:12px}}.disk-meter{{padding-top:6px}}.disk-bar{{height:10px;border-radius:999px;background:rgba(127,127,127,.16);overflow:hidden;margin:8px 0 14px}}.disk-bar span{{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--pink),var(--red));transition:width .4s ease}}.resource-monitor{{display:grid;gap:18px}}.resource-summary{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}.resource-stat{{position:relative;display:flex;align-items:center;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}}.resource-stat:after{{content:"";position:absolute;inset:auto -25px -45px auto;width:100px;height:100px;border-radius:50%;filter:blur(25px);opacity:.22}}.resource-stat.cpu:after{{background:#6ee7ff}}.resource-stat.ram:after{{background:#ff4fa3}}.resource-stat.disk:after{{background:#ff9b4a}}.rs-icon{{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.055);font-size:20px}}.resource-stat.cpu .rs-icon{{color:#6ee7ff}}.resource-stat.ram .rs-icon{{color:#ff4fa3}}.resource-stat.disk .rs-icon{{color:#ff9b4a}}.resource-stat small{{display:block;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:800}}.resource-stat strong{{display:block;font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;font-size:22px;margin-top:3px;letter-spacing:.2px}}.resource-stat i{{position:absolute;left:0;bottom:0;width:42%;height:2px}}.resource-stat.cpu i{{background:linear-gradient(90deg,#6ee7ff,transparent)}}.resource-stat.ram i{{background:linear-gradient(90deg,#ff4fa3,transparent)}}.resource-stat.disk i{{background:linear-gradient(90deg,#ff9b4a,transparent)}}.resource-plot{{border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(10,13,28,.66),rgba(41,14,48,.38));padding:18px 18px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 20px 60px rgba(0,0,0,.12);overflow:hidden}}.light .resource-plot{{background:linear-gradient(145deg,rgba(255,255,255,.55),rgba(255,224,242,.42))}}.plot-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}}.plot-kicker{{display:block;font-size:9px;letter-spacing:1.8px;color:#a78bfa;font-weight:900;margin-bottom:3px}}.plot-head b{{font-size:15px}}.live-dot{{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1px;font-weight:900;color:#6ee7b7}}.live-dot i{{width:7px;height:7px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 12px #6ee7b7;animation:livePulse 1.5s ease-in-out infinite}}@keyframes livePulse{{50%{{opacity:.35;transform:scale(.72)}}}}.plot-body{{position:relative;padding-right:38px}}.y-axis{{position:absolute;right:0;top:0;bottom:25px;width:34px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;color:var(--muted);font-size:9px}}.telemetry{{display:block;width:100%;height:270px;overflow:visible}}.grid-lines line{{stroke:currentColor;stroke-opacity:.08;stroke-width:1}}.area{{stroke:none}}.cpu-area{{fill:url(#fillCpu)}}.ram-area{{fill:url(#fillRam)}}.disk-area{{fill:url(#fillDisk)}}.line{{fill:none;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;filter:url(#glowC)}}.cpu-line{{stroke:#6ee7ff}}.ram-line{{stroke:#ff4fa3;filter:url(#glowP)}}.disk-line{{stroke:#ff9b4a}}.dot{{stroke:rgba(255,255,255,.9);stroke-width:2}}.cpu-dot{{fill:#6ee7ff}}.ram-dot{{fill:#ff4fa3}}.disk-dot{{fill:#ff9b4a}}.chart-legend{{display:flex;align-items:center;justify-content:flex-start;gap:18px;margin-top:2px;padding:0 4px;flex-wrap:wrap}}.legend{{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);font-weight:800}}.legend i{{width:8px;height:8px;border-radius:50%;box-shadow:0 0 10px currentColor}}.legend.cpu{{color:#6ee7ff}}.legend.ram{{color:#ff4fa3}}.legend.disk{{color:#ff9b4a}}.updated{{margin-right:auto;font-size:9px;color:var(--muted)}}.mini-chart{{height:190px;display:flex;align-items:end;gap:8px;padding:10px 2px 4px}}.chart-col{{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:6px}}.chart-value{{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}}.chart-bar{{height:115px;width:min(28px,70%);display:flex;align-items:end;border-radius:10px 10px 4px 4px;background:rgba(139,92,246,.10);overflow:hidden}}.chart-bar span{{display:block;width:100%;border-radius:inherit;background:linear-gradient(180deg,var(--accent2),var(--accent),var(--pink));min-height:3px}}.chart-col small{{font-size:9px;color:var(--muted)}}@media(max-width:720px){{.backup-row{{align-items:stretch;flex-direction:column}}.backup-row .actions{{width:100%}}.mini-chart{{height:170px}}.chart-value{{font-size:8px}}.resource-summary{{grid-template-columns:1fr}}.resource-stat{{padding:12px 14px}}.resource-stat strong{{font-size:20px}}.resource-plot{{padding:15px 12px 10px;border-radius:18px}}.telemetry{{height:210px}}.plot-body{{padding-right:32px}}.chart-legend{{gap:12px}}.updated{{width:100%;margin-right:0}}}}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>Backup Control Center · durwinam</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><button class="theme-toggle" id="themeToggle" type="button" aria-label="تغییر تم" title="تغییر تم">🌙</button><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");function apply(t){{root.classList.toggle("light",t==="light");if(btn){{btn.textContent=t==="light"?"🌙":"☀️";btn.title=t==="light"?"فعال‌سازی تم دارک":"فعال‌سازی تم لایت"}}}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}apply(t);if(btn)btn.addEventListener("click",function(){{t=root.classList.contains("light")?"dark":"light";apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}}});const meta=document.querySelector('meta[name="theme-color"]');if(meta){{const obs=new MutationObserver(function(){{meta.setAttribute("content",root.classList.contains("light")?"#fff1f8":"#06070d")}});obs.observe(root,{{attributes:true,attributeFilter:["class"]}});meta.setAttribute("content",root.classList.contains("light")?"#fff1f8":"#06070d")}}const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});const cd=document.getElementById("backupCountdown");if(cd){{let sec=parseInt(cd.textContent,10);if(Number.isFinite(sec)&&sec>=0){{const fmt=function(s){{s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return (d?d+" روز ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")}};cd.textContent=fmt(sec);setInterval(function(){{if(sec>0)sec--;cd.textContent=fmt(sec)}},1000)}}}}}})();</script></body></html>'''
 
 
 def hidden_csrf(sid):
@@ -624,6 +833,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_json(self, payload, status=200):
+        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.end_headers()
+        self.wfile.write(data)
+
     def form(self):
         n = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(n).decode("utf-8", errors="replace")
@@ -660,6 +878,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self.logged():
             self.redirect("/login"); return
 
+        if path == "/api/resources":
+            self.send_json(get_server_resource_usage()); return
+
         status = scheduler_status()
         if path == "/":
             token = c.get("token") or "تنظیم نشده"
@@ -683,8 +904,33 @@ class Handler(BaseHTTPRequestHandler):
 <article class="glass card backup-controls"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><div class="icon">⚙️</div><div style="min-width:0"><h3 class="title">تنظیمات Backup</h3><p class="sub">Backup Controls</p></div></div><span class="status {status_class}">{html.escape(status)}</span></div>
 <p class="empty">زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.</p><div class="actions backup-actions"><a class="btn primary" href="/backup-settings">مدیریت Backup</a><form method="post" action="/backup" style="display:flex;min-width:0">{hidden_csrf(self.sid())}<button class="btn good" type="submit">📦 Backup دستی</button></form></div></article>
 <article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📡</div><div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">🧪 ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">⏱️</div><div><h3 class="title">Backup بعدی</h3><p class="sub">Next Scheduled Backup</p></div></div><span class="status {status_class}">{'● فعال' if status == 'active' else '○ متوقف'}</span></div><div class="meta"><div class="meta-row"><span>⏳ زمان باقی‌مانده</span><strong id="backupCountdown">{html.escape(str(_next_backup_seconds(c.get('interval','24'), backup_info.get('latest_mtime')) if status == 'active' else '—'))}</strong></div><div class="meta-row"><span>⚙️ وضعیت Scheduler</span><strong>{'فعال' if status == 'active' else 'متوقف'}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📜</div><div><h3 class="title">آخرین فعالیت‌ها</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">🩺</div><div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row"><span>{"🟢" if ok else "🔴"} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail in get_health_info(c,panel_info))}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">💽</div><div><h3 class="title">فضای دیسک</h3><p class="sub">Disk Monitor</p></div></div></div><div class="disk-meter"><div class="disk-bar"><span style="width:{get_disk_info()["percent"]}%"></span></div><div class="meta-row"><span>استفاده‌شده</span><strong>{html.escape(str(get_disk_info()["used"]))}</strong></div><div class="meta-row"><span>آزاد</span><strong>{html.escape(str(get_disk_info()["free"]))}</strong></div></div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📈</div><div><h3 class="title">Backup هفت روز اخیر</h3><p class="sub">Backup Activity</p></div></div></div><div class="mini-chart">{''.join(f'<div class="chart-col"><div class="chart-value">{html.escape(_format_bytes(size)) if size else "0 B"}</div><div class="chart-bar"><span style="height:{pct}%"></span></div><small>{html.escape(label)}</small></div>' for label,size,pct in get_backup_chart())}</div><div class="actions"><a class="btn" href="/backups">📦 مدیریت Backupها</a></div></article>
+<article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px"><div class="icon">📊</div><div><h3 class="title">منابع سرور مجازی</h3><p class="sub">Live CPU · RAM · Disk usage</p></div></div></div>{_resource_chart_html()}</article>
 </div>'''
             self.send_html(page("Dashboard", body)); return
+
+        if path == "/backups":
+            archives=_backup_archives(); rows=[]
+            for item,size,mtime in archives:
+                name=html.escape(item.name); q=urllib.parse.quote(item.name,safe="")
+                rows.append(f'<div class="backup-row"><div><strong>📦 {name}</strong><div class="sub">{html.escape(time.strftime("%Y-%m-%d %H:%M",time.localtime(mtime)))} · {html.escape(_format_bytes(size))}</div></div><div class="actions compact"><a class="btn" href="/backup-download?name={q}">⬇️ دانلود</a><form method="post" action="/backup-delete">{hidden_csrf(self.sid())}<input type="hidden" name="name" value="{name}"><button class="btn danger" type="submit">🗑️ حذف</button></form></div></div>')
+            body=f"""<section class="hero"><h2>📦 <span class="gradient">مدیریت Backupها</span></h2><p>Backupهای موجود را مشاهده، دانلود یا حذف کنید.</p></section><div class="glass wide"><div class="backup-list">{''.join(rows) or '<div class="empty">هنوز Backupای پیدا نشد.</div>'}</div><div class="actions"><a class="btn" href="/">← داشبورد</a><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn primary" type="submit">🚀 ساخت Backup جدید</button></form></div></div>"""
+            self.send_html(page("Backup Manager",body)); return
+
+        if path == "/backup-download":
+            query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query); requested=Path(query.get("name",[""])[0]).name
+            target=next((item for item,_,_ in _backup_archives() if item.name==requested),None)
+            if not target or not target.is_file():
+                self.send_html(page("Not Found",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
+            try:
+                data=target.read_bytes(); self.send_response(200); self.send_header("Content-Type","application/zip"); self.send_header("Content-Length",str(len(data))); self.send_header("Content-Disposition",f'attachment; filename="{target.name}"'); self.end_headers(); self.wfile.write(data)
+            except OSError:
+                self.send_html(page("Backup",'<div class="glass"><div class="notice bad">خواندن Backup ناموفق بود.</div></div>'),500)
+            return
 
         if path == "/account":
             body = f'''<section class="hero"><h2>🔐 <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز عبور ورود به Web Panel را تغییر دهید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری فعلی</label><input value="{html.escape(canonical_username(c.get("username", "admin")))}" readonly><input type="hidden" name="username" value="{html.escape(canonical_username(c.get("username", "admin")))}"></div><div class="field"><label>رمز عبور فعلی</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>نام کاربری جدید</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required><div class="hint">حداقل ۸ کاراکتر، حداقل ۲ حرف انگلیسی، حداقل ۱ حرف بزرگ انگلیسی، ۱ عدد و ۱ کاراکتر ویژه مثل # @ *</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[A-Z])(?=.*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره تغییرات</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
@@ -787,7 +1033,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/stop":
             p = scheduler_service("stop")
+            _record_activity("Scheduler متوقف شد", "ok" if p.returncode == 0 else "bad")
             self.redirect("/backup-settings"); return
+
+        if path == "/backup-delete":
+            requested=Path(data.get("name","")).name
+            target=next((item for item,_,_ in _backup_archives() if item.name==requested),None)
+            if not target or not target.is_file():
+                self.send_html(page("Backup",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
+            try:
+                target.unlink(); _record_activity(f"Backup حذف شد: {requested}","ok"); self.redirect("/backups")
+            except OSError as exc:
+                self.send_html(page("Backup",f'<div class="glass"><div class="notice bad">حذف Backup ناموفق بود: {html.escape(str(exc))}</div></div>'),500)
+            return
 
         if path == "/backup":
             try:

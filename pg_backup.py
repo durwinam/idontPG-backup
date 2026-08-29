@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.5.3
+#   idontPG-backup  v5.5.4
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 #   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB

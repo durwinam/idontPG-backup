@@ -1,3 +1,9 @@
+## v5.5.4
+- Health Check dashboard
+- Backup manager with download/delete
+- Disk monitor
+- Seven-day backup activity chart
+
 ## v5.5.3 — Account validation rules
 - Username: 5–32 chars, English letters/numbers/hyphen only.
 - Password: minimum 8 chars, at least 2 letters, 1 number, and one of `#@*`.
@@ -12,6 +18,9 @@
 - Telegram Topic links are accepted in addition to numeric message_thread_id values.
 
 # Changelog
+
+## v5.5.4
+- Added scheduler countdown, recent activity card, and dashboard polish.
 
 ## v5.5.0
 - Added persistent Dark/Light theme toggle to the Web Panel.
