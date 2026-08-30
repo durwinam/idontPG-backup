@@ -1499,36 +1499,107 @@ const T={
 "مدیریت خصوصی":["مدیریت خصوصی","Private Administration","Приватное администрирование"],"این بخش فقط برای مدیر اصلی است.":["این بخش فقط برای مدیر اصلی است.","This area is for the main administrator only.","Этот раздел доступен только главному администратору."],"ورود به پنل":["ورود به پنل","Panel Login","Вход в панель"],"ورود به مدیریت":["ورود به مدیریت","Admin Login","Вход в администрирование"],"ورود امن":["ورود امن","Secure Login","Безопасный вход"],"راه‌اندازی اولیه":["راه‌اندازی اولیه","Initial Setup","Первичная настройка"],"ساخت رمز و ورود":["ساخت رمز و ورود","Create Password & Login","Создать пароль и войти"],"رمز مدیر":["رمز مدیر","Admin Password","Пароль администратора"],"رمز ادمین":["رمز ادمین","Admin Password","Пароль администратора"],"تکرار رمز":["تکرار رمز","Confirm Password","Повтор пароля"],"رمز جدید":["رمز جدید","New Password","Новый пароль"],"تکرار رمز جدید":["تکرار رمز جدید","Confirm New Password","Повтор нового пароля"],"تغییر رمز":["تغییر رمز","Change Password","Изменить пароль"],
 "مرکز مدیریت":["مرکز مدیریت","Control Center","Центр управления"],"شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.":["شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.","Customize the complete look, dashboard and web-panel components.","Полная настройка внешнего вида, панели и компонентов."],"شخصی‌سازی":["شخصی‌سازی","Customization","Настройка"],"شش تم آماده":["شش تم آماده","Six Ready Themes","Шесть готовых тем"],"کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.":["کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.","Regular users cannot choose the admin theme.","Обычные пользователи не видят выбор темы."],"ظاهر":["ظاهر","Appearance","Внешний вид"],"رنگ اصلی":["رنگ اصلی","Primary color","Основной цвет"],"رنگ دوم":["رنگ دوم","Secondary color","Вторичный цвет"],"Background":["پس‌زمینه","Background","Фон"],"Logo URL":["آدرس لوگو","Logo URL","URL логотипа"],"عرض Logo":["عرض Logo","Logo width","Ширина логотипа"],"شدت Glow":["شدت Glow","Glow intensity","Интенсивность свечения"],"Glow و حرکت":["Glow و حرکت","Glow & Motion","Свечение и анимация"],"سرعت انیمیشن":["سرعت انیمیشن","Animation speed","Скорость анимации"],"متن و برند":["متن و برند","Text & Branding","Текст и бренд"],"نام پنل":["نام پنل","Panel name","Название панели"],"عنوان داشبورد":["عنوان داشبورد","Dashboard title","Заголовок панели"],"عنوان بکاپ":["عنوان بکاپ","Backup title","Заголовок бэкапа"],"عنوان حجم مصرفی":["عنوان حجم مصرفی","Traffic title","Заголовок трафика"],"عنوان فعالیت‌های اخیر":["عنوان فعالیت‌های اخیر","Recent activity title","Заголовок последних действий"],"چیدمان و تجربه کاربر":["چیدمان و تجربه کاربر","Layout & User Experience","Макет и UX"],"عرض محتوای داشبورد":["عرض محتوای داشبورد","Dashboard content width","Ширина содержимого"],"فاصله بین کارت‌ها":["فاصله بین کارت‌ها","Card spacing","Расстояние между карточками"],"بخش‌های داشبورد":["بخش‌های داشبورد","Dashboard sections","Разделы панели"],"حجم مصرفی":["حجم مصرفی","Traffic usage","Использование трафика"],"آمار سرور":["آمار سرور","Server statistics","Статистика сервера"],"دکمه سفارشی":["دکمه سفارشی","Custom Button","Пользовательская кнопка"],"دکمه‌های سفارشی":["دکمه‌های سفارشی","Custom Buttons","Пользовательские кнопки"],"نام":["نام","Name","Название"],"آیکون":["آیکون","Icon","Иконка"],"لینک":["لینک","Link","Ссылка"],"افزودن":["افزودن","Add","Добавить"],"حذف":["حذف","Delete","Удалить"],"ذخیره تغییرات":["ذخیره تغییرات","Save Changes","Сохранить изменения"],"ذخیره همه تغییرات":["ذخیره همه تغییرات","Save All Changes","Сохранить все изменения"],"بازگشت":["بازگشت","Back","Назад"],"کاستوم":["کاستوم","Custom","Пользовательская"],"لایت":["لایت","Light","Светлая"],"دارک":["دارک","Dark","Тёмная"],"انتخاب تم":["انتخاب تم","Choose theme","Выбрать тему"],
 "نام کاربری":["نام کاربری","Username","Имя пользователя"],"نام کاربری ادمین":["نام کاربری ادمین","Admin username","Имя пользователя администратора"],"رمز عبور":["رمز عبور","Password","Пароль"],"رمز عبور جدید":["رمز عبور جدید","New password","Новый пароль"],"تلاش دوباره":["تلاش دوباره","Try again","Повторить"],"ساخت حساب و ورود":["ساخت حساب و ورود","Create account & login","Создать аккаунт и войти"],"باز کردن منو":["باز کردن منو","Open menu","Открыть меню"],"بستن منو":["بستن منو","Close menu","Закрыть меню"],"ساخت Backup جدید":["ساخت Backup جدید","Create New Backup","Создать новый бэкап"],"دانلود":["دانلود","Download","Скачать"],
-"صفحه پیدا نشد.":["صفحه پیدا نشد.","Page not found.","Страница не найдена."],"درخواست نامعتبر است.":["درخواست نامعتبر است.","Invalid request.","Недействительный запрос."],"درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":["درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.","Invalid or expired request. Please reload the page.","Недействительный или просроченный запрос. Обновите страницу."],"نام کاربری یا رمز ادمین اشتباه است.":["نام کاربری یا رمز ادمین اشتباه است.","Incorrect admin username or password.","Неверное имя пользователя или пароль администратора."],"نام کاربری یا رمز عبور اشتباه است.":["نام کاربری یا رمز عبور اشتباه است.","Incorrect username or password.","Неверное имя пользователя или пароль."],"خواندن Backup ناموفق بود.":["خواندن Backup ناموفق بود.","Failed to read backup.","Не удалось прочитать бэкап."],"فایل Backup ساخته نشد.":["فایل Backup ساخته نشد.","Backup file was not created.","Файл бэкапа не создан."],"تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":["تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.","Too many attempts; try again in 15 minutes.","Слишком много попыток; повторите через 15 минут."],"ذخیره تنظیمات ناموفق بود:":["ذخیره تنظیمات ناموفق بود:","Failed to save settings:","Не удалось сохранить настройки:"],"حذف Backup ناموفق بود:":["حذف Backup ناموفق بود","Failed to delete backup:","Не удалось удалить бэкап:"]
-};
-Object.assign(T,{"بکاپ":["بکاپ","Backup","Бэкап"],"فعالیت‌ها":["فعالیت‌ها","Activities","Действия"],"تعداد فعالیت‌ها":["تعداد فعالیت‌ها","Activity count","Количество действий"],"نمایش بخش‌ها":["نمایش بخش‌ها","Visible sections","Видимые разделы"],"توضیح داشبورد":["توضیح داشبورد","Dashboard description","Описание панели"],"عنوان Backup":["عنوان Backup","Backup title","Заголовок бэкапа"],"عنوان مصرف":["عنوان مصرف","Traffic title","Заголовок трафика"],"عنوان فعالیت":["عنوان فعالیت","Activity title","Заголовок действий"],"تلاش دوباره":["تلاش دوباره","Try again","Повторить"],"بازگشت به مدیریت":["بازگشت به مدیریت","Back to Admin","Вернуться в администрирование"],"برگشت":["برگشت","Back","Назад"],"← برگشت":["← برگشت","← Back","← Назад"],"← داشبورد":["← داشبورد","← Dashboard","← Панель"],"برگشت به Telegram":["برگشت به Telegram","Back to Telegram","Назад к Telegram"],"هنوز فعالیتی ثبت نشده.":["هنوز فعالیتی ثبت نشده.","No activity recorded yet.","Действий пока нет."],"Backup دستی ساخته شد":["Backup دستی ساخته شد","Manual backup created","Ручной бэкап создан"],"Backup و ارسال به Telegram موفق بود":["Backup و ارسال به Telegram موفق بود","Backup and Telegram delivery succeeded","Бэкап и отправка в Telegram выполнены успешно"],"Backup ساخته شد ولی ارسال Telegram ناموفق بود":["Backup ساخته شد ولی ارسال Telegram ناموفق بود","Backup was created, but Telegram delivery failed","Бэкап создан, но отправка в Telegram не удалась"],"Backup ناموفق بود":["Backup ناموفق بود","Backup failed","Бэкап не выполнен"],"Backup حذف شد:":["Backup حذف شد:","Backup deleted:","Бэкап удалён:"],"Backup در ":["Backup در ","Backup sent in ","Бэкап отправлен в "],"قسمت ارسال شد.":["قسمت ارسال شد.","parts.","частях."],"Backup ساخته شد:":["Backup ساخته شد:","Backup created:","Бэкап создан:"],"Backup بعدی":["Backup بعدی","Next Backup","Следующий бэкап"],"بکاپ و ارسال به Telegram موفق بود":["بکاپ و ارسال به Telegram موفق بود","Backup and Telegram delivery succeeded","Бэкап и отправка в Telegram выполнены успешно"],"به‌روزرسانی: ":["به‌روزرسانی: ","Updated: ","Обновлено: "]});
-Object.assign(T,{"مدیریت IDONT":["مدیریت IDONT","IDONT Administration","Администрирование IDONT"],"تنظیمات از کد اصلی جدا ذخیره می‌شوند":["تنظیمات از کد اصلی جدا ذخیره می‌شوند","Settings are stored separately from the core code.","Настройки хранятся отдельно от основного кода."],"اندازه فونت":["اندازه فونت","Font size","Размер шрифта"],"نمایش بخش‌ها":["نمایش بخش‌ها","Visible sections","Видимые разделы"],"وضعیت":["وضعیت","Status","Статус"],"رنگ":["رنگ","Color","Цвет"],"سرعت":["سرعت","Speed","Скорость"],"Emoji / Status":["ایموجی / وضعیت","Emoji / Status","Эмодзи / статус"],"متن‌ها":["متن‌ها","Texts","Тексты"],"پس‌زمینه":["پس‌زمینه","Background","Фон"],"دکمه‌های فعلی":["دکمه‌های فعلی","Current Buttons","Текущие кнопки"],"افزودن دکمه":["افزودن دکمه","Add Button","Добавить кнопку"],"تنظیمات از کد اصلی جدا ذخیره می‌شوند":["تنظیمات از کد اصلی جدا ذخیره می‌شوند","Settings are stored separately from the core code.","Настройки хранятся отдельно от основного кода."]});
+"صفحه پیدا نشد.":["صفحه پیدا نشد.","Page not found.","Страница не найдена."],"درخواست نامعتبر است.":["درخواست نامعتبر است.","Invalid request.","Недействительный запрос."],"درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":["درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.","Invalid or expired request. Please reload the page.","Недействительный или просроченный запрос. Обновите страницу."],"نام کاربری یا رمز ادمین اشتباه است.":["نام کاربری یا رمز ادمین اشتباه است.","Incorrect admin username or password.","Неверное имя пользователя или пароль администратора."],"نام کاربری یا رمز عبور اشتباه است.":["نام کاربری یا رمز عبور اشتباه است.","Incorrect username or password.","Неверное имя пользователя или пароль."],"خواندن Backup ناموفق بود.":["خواندن Backup ناموفق بود.","Failed to read backup.","Не удалось прочитать бэкап."],"فایل Backup ساخته نشد.":["فایل Backup ساخته نشد.","Backup file was not created.","Файл бэкапа не создан."],"تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":["تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.","Too many attempts; try again in 15 minutes.","Слишком много попыток; повторите через 15 минут."],"ذخیره تنظیمات ناموفق بود:":["ذخیره تنظیمات ناموفق بود:","Failed to save settings:","Не удалось сохранить настройки:"],"حذف Backup ناموفق بود:":["حذف Backup ناموفق بود","Failed to delete backup:","Не удалось удалить бэкап:"]};
+Object.assign(T,{"بکاپ":["بکاپ","Backup","Бэкап"],"فعالیت‌ها":["فعالیت‌ها","Activities","Действия"],"تعداد فعالیت‌ها":["تعداد فعالیت‌ها","Activity count","Количество действий"],"نمایش بخش‌ها":["نمایش بخش‌ها","Visible sections","Видимые разделы"],"توضیح داشبورد":["توضیح داشبورد","Dashboard description","Описание панели"],"عنوان Backup":["عنوان Backup","Backup title","Заголовок бэкапа"],"عنوان مصرف":["عنوان مصرف","Traffic title","Заголовок трафика"],"عنوان فعالیت":["عنوان فعالیت","Activity title","Заголовок действий"],"بازگشت به مدیریت":["بازگشت به مدیریت","Back to Admin","Вернуться в администрирование"],"برگشت":["برگشت","Back","Назад"],"← برگشت":["← برگشت","← Back","← Назад"],"← داشبورد":["← داشبورد","← Dashboard","← Панель"],"برگشت به Telegram":["برگشت به Telegram","Back to Telegram","Назад к Telegram"],"هنوز فعالیتی ثبت نشده.":["هنوز فعالیتی ثبت نشده.","No activity recorded yet.","Действий пока нет."],"Backup دستی ساخته شد":["Backup دستی ساخته شد","Manual backup created","Ручной бэкап создан"],"Backup و ارسال به Telegram موفق بود":["Backup و ارسال به Telegram موفق بود","Backup and Telegram delivery succeeded","Бэкап и отправка в Telegram выполнены успешно"],"Backup ساخته شد ولی ارسال Telegram ناموفق بود":["Backup ساخته شد ولی ارسال Telegram ناموفق بود","Backup was created, but Telegram delivery failed","Бэкап создан, но отправка в Telegram не удалась"],"Backup ناموفق بود":["Backup ناموفق بود","Backup failed","Бэкап не выполнен"],"Backup حذف شد:":["Backup حذف شد:","Backup deleted:","Бэкап удалён:"],"Backup در ":["Backup در ","Backup sent in ","Бэкап отправлен в "],"قسمت ارسال شد.":["قسمت ارسال شد.","parts.","частях."],"Backup ساخته شد:":["Backup ساخته شد:","Backup created:","Бэкап создан:"],"Backup بعدی":["Backup بعدی","Next Backup","Следующий бэкап"],"بکاپ و ارسال به Telegram موفق بود":["بکاپ و ارسال به Telegram موفق بود","Backup and Telegram delivery succeeded","Бэкап и отправка в Telegram выполнены успешно"],"به‌روزرسانی: ":["به‌روزرسانی: ","Updated: ","Обновлено: "]});
+Object.assign(T,{"مدیریت IDONT":["مدیریت IDONT","IDONT Administration","Администрирование IDONT"],"تنظیمات از کد اصلی جدا ذخیره می‌شوند":["تنظیمات از کد اصلی جدا ذخیره می‌شوند","Settings are stored separately from the core code.","Настройки хранятся отдельно от основного кода."],"اندازه فونت":["اندازه فونت","Font size","Размер шрифта"],"نمایش بخش‌ها":["نمایش بخش‌ها","Visible sections","Видимые разделы"],"وضعیت":["وضعیت","Status","Статус"],"رنگ":["رنگ","Color","Цвет"],"سرعت":["سرعت","Speed","Скорость"],"Emoji / Status":["ایموجی / وضعیت","Emoji / Status","Эмодзи / статус"],"متن‌ها":["متن‌ها","Texts","Тексты"],"پس‌زمینه":["پس‌زمینه","Background","Фон"],"دکمه‌های فعلی":["دکمه‌های فعلی","Current Buttons","Текущие кнопки"],"افزودن دکمه":["افزودن دکمه","Add Button","Добавить кнопку"]});
 Object.assign(T,{"Panel Information":["اطلاعات پنل","Panel Information","Информация о панели"],"Backup Information":["اطلاعات Backup","Backup Information","Информация о бэкапе"],"Telegram Backup":["بکاپ تلگرام","Telegram Backup","Резервная копия Telegram"],"Backup Controls":["تنظیمات Backup","Backup Controls","Управление бэкапом"],"Recent Activity":["فعالیت‌های اخیر","Recent Activity","Последние действия"],"Service status":["وضعیت سرویس‌ها","Service status","Состояние сервисов"],"Virtual Server Resources":["منابع سرور مجازی","Virtual Server Resources","Ресурсы виртуального сервера"],"Unavailable":["قابل دریافت نیست","Unavailable","Недоступно"],"Running":["در حال اجرا","Running","Работает"],"Active":["فعال","Active","Активно"],"Online":["آنلاین","Online","Онлайн"],"Offline":["آفلاین","Offline","Офлайн"],"No Proxy":["بدون Proxy","No Proxy","Без прокси"],"Manage Backup":["مدیریت Backup","Manage Backup","Управление бэкапом"],"Save Changes":["ذخیره تغییرات","Save Changes","Сохранить изменения"]});
+
+// Accept every language as an input key. This fixes pages whose server HTML is
+// Persian, English, Russian, or a mixture of them, and lets users switch back.
+const ALIAS={};
+Object.keys(T).forEach(k=>T[k].forEach((v,i)=>{if(v && !ALIAS[v])ALIAS[v]=T[k]}));
+const keys=Object.keys(ALIAS).filter(k=>k.length>1).sort((a,b)=>b.length-a.length);
 function translate(raw,lang){
-  if(T[raw])return T[raw][lang];
-  let out=raw;Object.keys(T).sort((a,b)=>b.length-a.length).forEach(k=>{if(k.length>2&&out.includes(k))out=out.split(k).join(T[k][lang])});return out;
+  if(!raw)return raw;
+  const exact=ALIAS[raw.trim()];
+  if(exact)return exact[lang];
+  let out=raw;
+  for(const k of keys){if(out.includes(k))out=out.split(k).join(ALIAS[k][lang]);}
+  return out;
+}
+function translateNodeText(node,lang){
+  if(!node||!node.nodeValue)return;
+  const raw=node.nodeValue;
+  const lead=(raw.match(/^\s*/)||[''])[0], tail=(raw.match(/\s*$/)||[''])[0];
+  const core=raw.slice(lead.length, raw.length-tail.length || undefined);
+  if(!core.trim())return;
+  const parent=node.parentElement;
+  if(!parent || parent.closest('script,style,[data-no-i18n]'))return;
+  const key='i18nTextOriginal';
+  const original=node[key]||core;
+  node[key]=original;
+  const translated=translate(original,lang);
+  if(translated!==original)node.nodeValue=lead+translated+tail;
+}
+function translateAttributes(el,lang){
+  if(!el||el.matches('script,style,[data-no-i18n]'))return;
+  ['placeholder','title','aria-label'].forEach(attr=>{
+    if(!el.hasAttribute(attr))return;
+    const ds='i18n'+attr.replace(/-([a-z])/g,(_,c)=>c.toUpperCase()).replace(/^./,c=>c.toUpperCase())+'Original';
+    const original=el.dataset[ds]||el.getAttribute(attr);
+    el.dataset[ds]=original;
+    const translated=translate(original,lang);
+    if(translated!==original)el.setAttribute(attr,translated);
+  });
+  if(el.matches('input[type="submit"],button')){
+    const original=el.dataset.i18nValueOriginal||el.value;
+    if(original){el.dataset.i18nValueOriginal=original;el.value=translate(original,lang)}
+  }
+}
+let applying=false;
+function applyTranslations(lang){
+  if(applying)return; applying=true;
+  try{
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+    nodes.forEach(n=>translateNodeText(n,lang));
+    document.querySelectorAll('body *').forEach(el=>translateAttributes(el,lang));
+  }finally{applying=false}
 }
 function setLanguage(lang){
-  if(!["fa","en","ru"].includes(lang))lang="en";
-  document.documentElement.lang=lang;document.documentElement.dir=lang==="fa"?"rtl":"ltr";
-  document.body.classList.toggle("lang-en",lang==="en");document.body.classList.toggle("lang-ru",lang==="ru");document.body.classList.toggle("lang-fa",lang==="fa");
-  document.querySelectorAll("[data-lang-choice]").forEach(x=>x.classList.toggle("active",x.dataset.langChoice===lang));
-  const menu=document.getElementById("languageMenu");if(menu)menu.hidden=true;
-  const btn=document.getElementById("languageToggle");if(btn)btn.title=lang==="fa"?"زبان":lang==="ru"?"Язык":"Language";
-  document.querySelectorAll("body *:not(script):not(style)").forEach(el=>{
-    if(el.children.length||el.matches("input,textarea,select,option"))return;
-    const raw=el.dataset.i18nOriginal||el.textContent.trim();if(!raw)return;el.dataset.i18nOriginal=raw;el.textContent=translate(raw,lang);
-  });
-  document.querySelectorAll("input[placeholder],textarea[placeholder]").forEach(el=>{const raw=el.dataset.i18nPlaceholder||el.placeholder;if(raw){el.dataset.i18nPlaceholder=raw;el.placeholder=translate(raw,lang)}});
+  if(!['fa','en','ru'].includes(lang))lang='en';
+  document.documentElement.lang=lang;
+  document.documentElement.dir=lang==='fa'?'rtl':'ltr';
+  document.body.classList.toggle('lang-en',lang==='en');
+  document.body.classList.toggle('lang-ru',lang==='ru');
+  document.body.classList.toggle('lang-fa',lang==='fa');
+  document.querySelectorAll('[data-lang-choice]').forEach(x=>x.classList.toggle('active',x.dataset.langChoice===lang));
+  const menu=document.getElementById('languageMenu');if(menu)menu.hidden=true;
+  const btn=document.getElementById('languageToggle');if(btn){btn.title=lang==='fa'?'زبان':lang==='ru'?'Язык':'Language';btn.setAttribute('aria-label',btn.title)}
+  applyTranslations(lang);
   try{localStorage.setItem(LANG_KEY,lang)}catch(e){}
 }
-const lb=document.getElementById("languageToggle"),lm=document.getElementById("languageMenu");
-let current="en";try{current=localStorage.getItem(LANG_KEY)||"en"}catch(e){}
-if(!["fa","en","ru"].includes(current))current="en";
-if(lb)lb.addEventListener("click",e=>{e.stopPropagation();if(lm)lm.hidden=!lm.hidden});
-if(lm)lm.querySelectorAll("[data-lang-choice]").forEach(x=>x.addEventListener("click",()=>setLanguage(x.dataset.langChoice)));
-document.addEventListener("click",e=>{if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true});
+const lb=document.getElementById('languageToggle'),lm=document.getElementById('languageMenu');
+let current='en';try{current=localStorage.getItem(LANG_KEY)||'en'}catch(e){}
+if(!['fa','en','ru'].includes(current))current='en';
+if(lb)lb.addEventListener('click',e=>{e.stopPropagation();if(lm)lm.hidden=!lm.hidden});
+if(lm)lm.querySelectorAll('[data-lang-choice]').forEach(x=>x.addEventListener('click',()=>setLanguage(x.dataset.langChoice)));
+document.addEventListener('click',e=>{if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true});
 setLanguage(current);
+// Translate notices/statuses that are inserted after page load without
+// translating the whole page again.
+if(window.MutationObserver){
+  const observer=new MutationObserver(muts=>{
+    if(applying)return;
+    const lang=document.documentElement.lang||'en';
+    muts.forEach(m=>{
+      m.addedNodes.forEach(n=>{
+        if(n.nodeType===Node.TEXT_NODE){
+          translateNodeText(n,lang);
+        }else if(n.nodeType===Node.ELEMENT_NODE){
+          if(n.matches && n.matches('[data-no-i18n]'))return;
+          translateAttributes(n,lang);
+          n.querySelectorAll('*').forEach(el=>translateAttributes(el,lang));
+          const w=document.createTreeWalker(n,NodeFilter.SHOW_TEXT);
+          const a=[];
+          while(w.nextNode())a.push(w.currentNode);
+          a.forEach(t=>translateNodeText(t,lang));
+        }
+      });
+    });
+  });
+  observer.observe(document.body,{childList:true,subtree:true});
+}
 })();"""
 
 def page(title, body, logged=True, notice="", kind="ok"):
@@ -1626,7 +1697,7 @@ def idont_admin_html():
 input{width:100%%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.18);color:inherit}
 label{display:block;font-size:12px;opacity:.75;margin:9px 0 5px}.btn{display:inline-block;padding:10px 14px;border:0;border-radius:12px;background:linear-gradient(135deg,#8b5cf6,#22d3ee);color:#fff;text-decoration:none;font-weight:700;cursor:pointer}
 @media(max-width:650px){.row{grid-template-columns:1fr 1fr}.row b{grid-column:1/-1}}
-<style>.language-picker{position:relative}.language-toggle{width:44px;height:42px;padding:0;border:1px solid rgba(34,211,238,.28);border-radius:14px;color:#67e8f9;background:rgba(255,255,255,.06);backdrop-filter:blur(18px);cursor:pointer;display:grid;place-items:center;box-shadow:0 0 22px rgba(34,211,238,.08)}.language-svg{width:21px;height:21px;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 7px currentColor)}.language-menu{position:absolute;top:50px;right:0;z-index:20;min-width:150px;padding:7px;border:1px solid rgba(34,211,238,.2);border-radius:16px;background:rgba(8,11,20,.96);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%%;display:flex;gap:9px;align-items:center;padding:10px;border:0;border-radius:10px;background:transparent;color:#eef2ff;cursor:pointer;font:inherit}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.18)}.lang-code{font-size:10px;font-weight:900}</style></style></head><body class="lang-en"><main class="wrap">
+<style>.language-picker{position:relative}.language-toggle{width:44px;height:42px;padding:0;border:1px solid rgba(34,211,238,.28);border-radius:14px;color:#67e8f9;background:rgba(255,255,255,.06);backdrop-filter:blur(18px);cursor:pointer;display:grid;place-items:center;box-shadow:0 0 22px rgba(34,211,238,.08)}.language-svg{width:21px;height:21px;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 7px currentColor)}.language-menu{position:absolute;top:50px;right:0;z-index:20;min-width:150px;padding:7px;border:1px solid rgba(34,211,238,.2);border-radius:16px;background:rgba(8,11,20,.96);backdrop-filter:blur(22px);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%%;display:flex;gap:9px;align-items:center;padding:10px;border:0;border-radius:10px;background:transparent;color:#eef2ff;cursor:pointer;font:inherit}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.18)}.lang-code{font-size:10px;font-weight:900}</style></head><body class="lang-en"><main class="wrap">
 <div class="top"><div><h1>⚙️ مدیریت IDONT</h1><small>تنظیمات از کد اصلی جدا ذخیره می‌شوند</small></div><div style="display:flex;gap:8px;align-items:center">__LANG_MENU__<a class="btn" href="/">بازگشت</a></div></div>
 <form method="post">
 <div class="grid">
