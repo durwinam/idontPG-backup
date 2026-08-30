@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.5.4-node-traffic-fix3"
+VERSION = "5.5.4-node-traffic-fix4"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
 STATE_DIR = Path("/etc/idontPG-backup")
@@ -659,8 +659,9 @@ def _pg_json_get(path, token):
         _pg_api_base() + path,
         headers={
             "Authorization": f"Bearer {token}",
+            "X-Api-Key": token,
             "Accept": "application/json",
-            "User-Agent": "idontPG-backup/5.5.4",
+            "User-Agent": f"{APP}/{VERSION}",
         },
         method="GET",
     )
@@ -927,26 +928,37 @@ def _discover_pg_nodes(token):
 
 
 def _node_value(node, *keys):
-    for key in keys:
-        value = node.get(key)
-        if value not in (None, ""):
-            return value
-    # Be tolerant of newer panel responses that nest connection details.
-    for parent in ("config", "connection", "node", "settings"):
-        obj = node.get(parent)
+    # PasarGuard panel versions have returned connection fields both at the
+    # top level and inside config/connection/node/settings.  Search all of
+    # those shapes without assuming a fixed schema.
+    objects = [node]
+    for parent in ("config", "connection", "node", "settings", "server"):
+        obj = node.get(parent) if isinstance(node, dict) else None
         if isinstance(obj, dict):
-            for key in keys:
-                value = obj.get(key)
-                if value not in (None, ""):
-                    return value
+            objects.append(obj)
+    for obj in objects:
+        for key in keys:
+            value = obj.get(key)
+            if value not in (None, ""):
+                return value
     return ""
 
 
 def _node_address(node):
     value = str(_node_value(node, "address", "host", "ip", "domain", "hostname", "server") or "").strip()
-    if "//" in value:
+    if "://" in value:
         parsed = urllib.parse.urlparse(value)
         value = parsed.hostname or value
+    elif value.startswith("[") and "]" in value:
+        value = value[1:value.find("]")]
+    # If the panel returns host:port in address, keep only the host here; the
+    # service port is resolved separately from the node's own port field.
+    try:
+        parsed = urllib.parse.urlparse("//" + value)
+        if parsed.hostname:
+            value = parsed.hostname
+    except Exception:
+        pass
     return value.strip("[]")
 
 
@@ -955,6 +967,9 @@ def _node_port(node):
     try:
         return int(value)
     except (TypeError, ValueError):
+        text = str(value or "").strip()
+        if text.isdigit():
+            return int(text)
         return 0
 
 
@@ -990,14 +1005,16 @@ def _node_grpc_target(node):
 
 
 def _node_stats_total(stats):
-    # Current Node returns Stat.type as strings such as uplink/downlink.
+    # UsersStat returns one Stat record per traffic counter.  Depending on
+    # Node/Core version the type string can be "uplink", "downlink", or be
+    # omitted/renamed.  For a UsersStat response every value is a traffic
+    # counter, so summing all non-negative values is the version-safe choice.
     total = 0
     for item in stats:
-        direction = str(item.get("type") or "").lower()
-        if direction in ("uplink", "downlink"):
+        try:
             total += max(0, int(item.get("value") or 0))
-    if total == 0:
-        total = sum(max(0, int(x.get("value") or 0)) for x in stats)
+        except (TypeError, ValueError):
+            continue
     return total
 
 
@@ -1077,14 +1094,25 @@ def _node_stats_rest(node):
 
 
 def _node_stats_raw(node):
-    # gRPC is the canonical service transport. REST is a documented fallback.
+    # Honor the Node's configured transport when present. The same node
+    # address/port/api_key/server_ca supplied by PasarGuard is used; no fixed
+    # localhost address or fixed port is assumed.
+    protocol = str(_node_value(node, "service_protocol", "protocol", "transport") or "").lower()
+    if protocol in ("rest", "http", "https"):
+        try:
+            return _node_stats_rest(node)
+        except Exception as rest_error:
+            try:
+                return _node_stats_grpc(node)
+            except Exception as grpc_error:
+                raise RuntimeError(f"rest: {rest_error} | grpc: {grpc_error}")
     try:
         return _node_stats_grpc(node)
     except Exception as grpc_error:
         try:
             return _node_stats_rest(node)
         except Exception as rest_error:
-            raise RuntimeError(f"{grpc_error} | {rest_error}")
+            raise RuntimeError(f"grpc: {grpc_error} | rest: {rest_error}")
 
 
 def _load_node_traffic_state():
