@@ -28,16 +28,16 @@ from pathlib import Path
 APP = "idontPG-backup"
 VERSION = "5.6.5"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
-HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
-PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
-STATE_DIR = Path(os.environ.get("IDONTPG_STATE_DIR", "/etc/idontPG-backup"))
+HOST = os.environ.get("IDONT_HOST", "0.0.0.0")
+PORT = int(os.environ.get("IDONT_PORT", "5000"))
+STATE_DIR = Path(os.environ.get("IDONT_STATE_DIR", "/etc/idont-backup"))
 CONFIG = STATE_DIR / "web.json"
 SCRIPT = Path(__file__).resolve()
-LOGO_CANDIDATES = [SCRIPT.parent / "web" / "static" / "logo.png", Path("/usr/local/share/idontPG-backup/logo.png")]
+LOGO_CANDIDATES = [SCRIPT.parent / "web" / "static" / "logo.png", Path("/usr/local/share/idont-backup/logo.png")]
 CORE_CANDIDATES = [
-    Path("/usr/local/bin/idontPG-backup"),
-    Path("/usr/local/bin/PG-Backup"),
-    SCRIPT.parent / "pg_backup.py",
+    Path("/usr/local/bin/idont-backup"),
+    Path("/usr/local/bin/-Backup"),
+    SCRIPT.parent / "_backup.py",
 ]
 SESSIONS = {}
 ADMIN_LOGIN_ATTEMPTS = {}
@@ -59,10 +59,10 @@ def load_core():
             continue
         try:
             if path.suffix == ".py":
-                spec = importlib.util.spec_from_file_location("idontpg_core", str(path))
+                spec = importlib.util.spec_from_file_location("idont_core", str(path))
             else:
-                loader = importlib.machinery.SourceFileLoader("idontpg_core", str(path))
-                spec = importlib.util.spec_from_loader("idontpg_core", loader)
+                loader = importlib.machinery.SourceFileLoader("idont_core", str(path))
+                spec = importlib.util.spec_from_loader("idont_core", loader)
             if spec is None or spec.loader is None:
                 continue
             mod = importlib.util.module_from_spec(spec)
@@ -74,7 +74,7 @@ def load_core():
             last_error = exc
             continue
     detail = f": {last_error}" if 'last_error' in locals() else ""
-    raise RuntimeError(f"idontPG-backup core could not be loaded{detail}")
+    raise RuntimeError(f"idont-backup core could not be loaded{detail}")
 
 
 def load_cfg():
@@ -176,7 +176,7 @@ def telegram_test(c):
         return False, "Bot Token و Chat ID الزامی هستند."
     if topic_raw and not topic:
         return False, "Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید."
-    params = {"chat_id": chat, "text": "✅ idontPG-backup\nTelegram connection test successful."}
+    params = {"chat_id": chat, "text": "✅ idont-backup\nTelegram connection test successful."}
     if topic:
         params["message_thread_id"] = int(topic)
     try:
@@ -296,7 +296,7 @@ def scheduler_status():
 
 
 def _panel_read_env():
-    """Read PasarGuard's .env using the same source path as PGClockMG."""
+    """Read PasarGuard's .env using the same source path as idontPG."""
     env_path = Path("/opt/pasarguard/.env")
     try:
         return env_path.read_text(encoding="utf-8", errors="ignore") if env_path.exists() else ""
