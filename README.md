@@ -57,24 +57,24 @@ idontPG-backup دارای یک پنل وب سبک و حرفه‌ای برای م
 - 🤖 ارسال پیام تست به ربات Telegram
 - 📦 مدیریت Backupهای ذخیره‌شده
 - 🔎 نمایش وضعیت عملیات Backup
-
+  
+```bash
 Web panel_URL:http://IP-SERVER:5000
-
----
+```
 
 🛠 نصب و اجرا
-
+```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/durwinam/idontPG-backup/main/install.sh)"
-
+```
 پس از نصب:
-
+```bash
 idontPG-backup
-
+```
 برای آپدیت:
-
+```bash
 idont-backup update
+```
 
----
 
 ✦ درباره پروژه
 
@@ -161,8 +161,8 @@ MySQL / MariaDB
 - تشخیص Credential مناسب
 - Fallback خودکار در شرایط خطای Authentication
 
----
 
+```bash
 🧠 تشخیص خودکار Backend
 
 نیازی نیست نوع دیتابیس را دستی وارد کنید.
@@ -202,7 +202,7 @@ PasarGuard
 - 🚚 Migration
 - 🔄 Transfer
 
----
+```
 
 📡 Telegram
 
