@@ -121,42 +121,16 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | 🚚 Migration | 🚧 به‌زودی |
 | 🔄 Transfer | 🚧 به‌زودی |
 
-🗄️ Database Engine Support
+# 🗄️ Database Engine Support
 
-سیستم قبل از شروع عملیات، Backend نصب‌شده روی PasarGuard را
-به‌صورت خودکار شناسایی می‌کند.
+سیستم قبل از شروع عملیات، Backend نصب‌شده روی PasarGuard را به‌صورت خودکار شناسایی می‌کند.
 
-پشتیبانی فعلی:
-
-SQLite
-
-- Backup مستقیم فایل دیتابیس
-- Restore با مسیر مقصد اعتبارسنجی‌شده
-- محافظت در برابر overwrite مسیرهای غیرمجاز
-
-PostgreSQL
-
-- "pg_dump"
-- "pg_dumpall"
-- Backup تمام Databaseها
-- Backup اطلاعات Global
-- Restore جداگانه هر Database
-
-TimescaleDB
-
-تمام قابلیت‌های PostgreSQL به‌همراه:
-
-- تشخیص TimescaleDB
-- ثبت نسخه Extension
-- Restore مستقل Databaseها
-
-MySQL / MariaDB
-
-- "mysqldump"
-- Backup مستقل Databaseها
-- ایجاد خودکار Database در Restore
-- تشخیص Credential مناسب
-- Fallback خودکار در شرایط خطای Authentication
+| Database Engine | قابلیت‌ها |
+|---|---|
+| 🟢 **SQLite** | • Backup مستقیم فایل دیتابیس<br>• Restore با مسیر مقصد اعتبارسنجی‌شده<br>• محافظت در برابر overwrite مسیرهای غیرمجاز |
+| 🔵 **PostgreSQL** | • `pg_dump`<br>• `pg_dumpall`<br>• Backup تمام Databaseها<br>• Backup اطلاعات Global<br>• Restore جداگانه هر Database |
+| 🟣 **TimescaleDB** | • تمام قابلیت‌های PostgreSQL<br>• تشخیص TimescaleDB<br>• ثبت نسخه Extension<br>• Restore مستقل Databaseها |
+| 🟠 **MySQL / MariaDB** | • `mysqldump`<br>• Backup مستقل Databaseها<br>• ایجاد خودکار Database در Restore<br>• تشخیص Credential مناسب<br>• Fallback خودکار در شرایط خطای Authentication |
 
 
 ```bash
