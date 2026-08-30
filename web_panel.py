@@ -1333,7 +1333,7 @@ def _resource_chart_html():
   function area(values){return path(values)+' L 900 300 L 0 300 Z'}
   function point(values){const v=values[values.length-1],x=900,y=300-(Math.max(0,Math.min(100,v))/100)*300;return [x,y]}
   function render(){['cpu','ram','disk'].forEach(k=>{const vals=history.map(x=>x[k]);document.getElementById(k+'Line').setAttribute('d',path(vals));document.getElementById(k+'Area').setAttribute('d',area(vals));const pt=point(vals),dot=document.getElementById(k+'Dot');dot.setAttribute('cx',pt[0]);dot.setAttribute('cy',pt[1]);});}
-  function setVals(u){['cpu','ram','disk'].forEach(k=>document.getElementById(k+'Value').textContent=Number(u[k]).toFixed(1)+'%');history.push({cpu:Number(u.cpu),ram:Number(u.ram),disk:Number(u.disk)});history.shift();render();document.getElementById('resourceUpdated').textContent='به‌روزرسانی: '+new Date().toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+  function setVals(u){['cpu','ram','disk'].forEach(k=>document.getElementById(k+'Value').textContent=Number(u[k]).toFixed(1)+'%');history.push({cpu:Number(u.cpu),ram:Number(u.ram),disk:Number(u.disk)});history.shift();render();const L=(document.documentElement.lang||'en');const locale=L==='fa'?'fa-IR':L==='ru'?'ru-RU':'en-US';const prefix=L==='fa'?'به‌روزرسانی: ':L==='ru'?'Обновлено: ':'Updated: ';document.getElementById('resourceUpdated').textContent=prefix+new Date().toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   render();
   async function refresh(){try{const r=await fetch('/api/resources',{cache:'no-store',credentials:'same-origin'});if(!r.ok) throw new Error('status');setVals(await r.json());}catch(e){}}
   setInterval(refresh,3000);
@@ -1458,7 +1458,7 @@ body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.86),rgba(
 @media(max-width:800px){.hero{margin-top:8px;margin-bottom:18px}.hero h2{font-size:clamp(25px,8vw,34px);line-height:1.25;letter-spacing:-.8px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}.hero p{font-size:12px;line-height:1.8}.top-actions{gap:7px}}
 
 /* v5.6.4 visual polish: consistent light surfaces, language selector and cleaner telemetry */
-.language-picker{position:relative}.language-toggle svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px currentColor);transition:.25s ease}.language-toggle:hover svg{transform:rotate(12deg) scale(1.06)}.lang-flag{display:grid;place-items:center;width:28px;height:22px;border-radius:7px;font-size:9px;font-weight:900;letter-spacing:.4px;background:linear-gradient(135deg,rgba(34,211,238,.18),rgba(124,58,237,.2));border:1px solid rgba(103,232,249,.2);box-shadow:0 0 10px rgba(34,211,238,.12)}.language-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.language-toggle:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.45);box-shadow:0 10px 30px rgba(34,211,238,.14)}.language-menu{position:absolute;top:50px;right:0;z-index:131;min-width:155px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(12,14,24,.94);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%;display:flex;align-items:center;gap:9px;padding:10px 11px;border:0;border-radius:11px;background:transparent;color:var(--text);cursor:pointer;font:inherit;text-align:right}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.12)}body.light .language-menu{background:rgba(255,255,255,.96);border-color:rgba(124,58,237,.18);box-shadow:0 18px 50px rgba(124,58,237,.18)}body.light .language-menu button{color:#26162d}body.light .language-menu button:hover,body.light .language-menu button.active{background:rgba(124,58,237,.08)}
+.language-picker{position:relative}.language-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.language-toggle{display:grid;place-items:center;position:relative;z-index:2}.language-svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 6px currentColor);transition:transform .25s ease,filter .25s ease}.language-toggle:hover .language-svg{transform:rotate(12deg) scale(1.08);filter:drop-shadow(0 0 9px currentColor) drop-shadow(0 0 16px var(--accent2))}.language-toggle:active .language-svg{transform:scale(.94)}.lang-code{display:inline-grid;place-items:center;min-width:29px;height:24px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:9px;font-weight:900;letter-spacing:.6px;box-shadow:0 0 14px color-mix(in srgb,var(--accent2) 35%,transparent)}.language-toggle:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.45);box-shadow:0 10px 30px rgba(34,211,238,.14)}.language-menu{position:absolute;top:50px;right:0;z-index:131;min-width:155px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(12,14,24,.94);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%;display:flex;align-items:center;gap:9px;padding:10px 11px;border:0;border-radius:11px;background:transparent;color:var(--text);cursor:pointer;font:inherit;text-align:right}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.12)}body.light .language-menu{background:rgba(255,255,255,.96);border-color:rgba(124,58,237,.18);box-shadow:0 18px 50px rgba(124,58,237,.18)}body.light .language-menu button{color:#26162d}body.light .language-menu button:hover,body.light .language-menu button.active{background:rgba(124,58,237,.08)}
 body.light{color-scheme:light}body.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.90),rgba(250,243,255,.78))!important;border-color:rgba(124,58,237,.16)!important;box-shadow:0 18px 55px rgba(77,37,102,.10),inset 0 1px 0 rgba(255,255,255,.90)}body.light .card:hover{box-shadow:0 22px 65px rgba(77,37,102,.13),inset 0 1px 0 rgba(255,255,255,.95)}body.light .meta-row,body.light .resource-stat,body.light .chart-bar,body.light .theme-toggle,body.light .menu-toggle{background:rgba(255,255,255,.68)!important;border-color:rgba(124,58,237,.14)!important;color:#26162d}body.light .resource-stat{box-shadow:0 8px 24px rgba(77,37,102,.07),inset 0 1px 0 rgba(255,255,255,.95)}body.light .resource-plot{background:linear-gradient(145deg,rgba(255,255,255,.84),rgba(246,238,255,.72))!important;border-color:rgba(124,58,237,.15)!important;box-shadow:0 14px 42px rgba(77,37,102,.08),inset 0 1px 0 rgba(255,255,255,.92)}body.light .resource-stat:after{opacity:.12}body.light .grid-lines line{stroke:#6b5875;stroke-opacity:.10}body.light .resource-stat small,body.light .resource-stat strong,body.light .plot-head b{color:#26162d}body.light .plot-kicker{color:#7c3aed}body.light .y-axis,body.light .legend,body.light .updated,body.light .resource-stat small{color:#735c78}body.light .chart-bar{box-shadow:inset 0 0 0 1px rgba(124,58,237,.08)}body.light .field input,body.light .field select,body.light textarea{background:rgba(255,255,255,.82)!important;color:#26162d!important;border-color:rgba(124,58,237,.16)!important}body.light .btn:not(.primary){background:rgba(255,255,255,.74);color:#3d2450;border-color:rgba(124,58,237,.16)}body.light .sub,body.light .empty,body.light .hint,body.light .brand p,body.light .footer{color:#735c78}body.light .brand h1,body.light .title{color:#26162d}body.light .gradient{background:linear-gradient(90deg,#5b21b6,#7c3aed,#db2777);-webkit-background-clip:text;background-clip:text;color:transparent}
 body.light .card-icon,body.light .hero-icon{filter:none}body.light .neo-icon{background:transparent!important;border-color:transparent!important;box-shadow:none!important}body.light .neo-icon svg{filter:drop-shadow(0 0 7px currentColor)}
 body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,240,255,.92))!important;border-color:rgba(124,58,237,.16)!important}.lang-en .hero{text-align:left}.lang-en .card-head,.lang-en .plot-head,.lang-en .topbar{direction:ltr}.lang-en .meta-row,.lang-en .resource-stat{direction:ltr}.lang-ru .hero{text-align:left}.lang-ru .card-head,.lang-ru .plot-head,.lang-ru .topbar{direction:ltr}.lang-ru .meta-row,.lang-ru .resource-stat{direction:ltr}html[dir="ltr"] .language-menu,html[dir="ltr"] .theme-menu{right:auto;left:0}html[dir="ltr"] .updated{margin-left:auto;margin-right:0}html[dir="ltr"] .drawer{left:auto;right:0}html[dir="ltr"] .plot-body{padding-left:38px;padding-right:0}html[dir="ltr"] .y-axis{left:0;right:auto;align-items:flex-end}
@@ -1497,15 +1497,16 @@ body.custom .meta-row,body.custom .resource-stat,body.custom .chart-bar,body.cus
 
 
 def ui_language_menu():
-    return """<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="Change language" title="Change language"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5c2.2 2.4 3.2 5.2 3.2 8.5s-1 6.1-3.2 8.5c-2.2-2.4-3.2-5.2-3.2-8.5s1-6.1 3.2-8.5Z"/><path d="M5.5 7.2h13M5.5 16.8h13"/></svg></button><div class="language-menu" id="languageMenu" hidden><button type="button" data-lang-choice="fa"><span class="lang-flag">IR</span><span>فارسی</span></button><button type="button" data-lang-choice="en"><span class="lang-flag">EN</span><span>English</span></button><button type="button" data-lang-choice="ru"><span class="lang-flag">RU</span><span>Русский</span></button></div></div>"""
+    return """<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="Change language" title="Language"><svg class="language-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4M12 3.5c2.25 2.35 3.35 5.18 3.35 8.5S14.25 18.15 12 20.5C9.75 18.15 8.65 15.32 8.65 12S9.75 5.85 12 3.5ZM5.4 7.1h13.2M5.4 16.9h13.2"></path></svg></button><div class="language-menu" id="languageMenu" hidden><button type="button" data-lang-choice="fa"><span class="lang-code">FA</span><span>فارسی</span></button><button type="button" data-lang-choice="en"><span class="lang-code">EN</span><span>English</span></button><button type="button" data-lang-choice="ru"><span class="lang-code">RU</span><span>Русский</span></button></div></div>"""
 
 
 def ui_language_script():
     # Client-side localization keeps the backend/API unchanged and makes the
     # three-language switch instant. Custom/admin-entered text is left alone.
     return r"""(function(){
-const LANG_KEY="idontpg-lang";
+const LANG_KEY="idontpg-lang-v2";
 const maps={
+ fa:{},
  en:{
   "داشبورد":"Dashboard","نمای کلی سیستم":"System overview","بکاپ تلگرام":"Telegram Backup","تنظیمات و ارسال":"Settings & delivery","تنظیمات بکاپ":"Backup Settings","Scheduler و Backup":"Scheduler & Backup","تست تلگرام":"Telegram Test","بررسی اتصال":"Connection check","حساب کاربری":"Account","مدیریت ورود":"Login management","خروج":"Logout","پایان نشست":"End session","منوی اصلی":"Main menu",
   "مدیریت Backupها":"Manage Backups","Backupهای موجود را مشاهده، دانلود یا حذف کنید.":"View, download or delete available backups.","هنوز Backupای پیدا نشد.":"No backups found.","اطلاعات Backup":"Backup Information","تعداد Backup":"Backup count","حجم کل Backupها":"Total backup size","آخرین Backup":"Latest backup","هنوز Backup ساخته نشده":"No backup created yet","قابل دریافت نیست":"Unavailable",
@@ -1528,66 +1529,59 @@ const maps={
   "پیام تست با موفقیت ارسال شد.":"Тестовое сообщение отправлено.","ارسال پیام تست ناموفق بود.":"Не удалось отправить тестовое сообщение.","Scheduler ذخیره و شروع شد.":"Планировщик сохранён и запущен.","Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد.":"Планировщик сохранён, но запуск завершился ошибкой.","تنظیمات عمومی ذخیره شد.":"Общие настройки сохранены.","تنظیمات Telegram با موفقیت ذخیره شد.":"Настройки Telegram сохранены.","تنظیمات حساب با موفقیت ذخیره شد.":"Настройки аккаунта сохранены.","تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.":"Настройки сохранены и применены ко всей панели.","آنلاین":"Онлайн","آفلاین":"Офлайн","قابل دریافت نیست":"Недоступно","بدون Proxy":"Без прокси","نامعتبر":"Недействительно"
  }
 };
-function translateTextNode(node, dict){
-  const original=node.__idontpgOriginal ?? node.nodeValue;
-  if(node.__idontpgOriginal === undefined) node.__idontpgOriginal=original;
-  if(!original || !original.trim()) return;
-  let value=original;
-  const trimmed=original.trim();
-  if(Object.prototype.hasOwnProperty.call(dict,trimmed)) value=original.replace(trimmed,dict[trimmed]);
-  else {
-    Object.keys(dict).sort((a,b)=>b.length-a.length).forEach(k=>{
-      if(k.length>1 && value.includes(k)) value=value.split(k).join(dict[k]);
-    });
-  }
-  if(value!==node.nodeValue) node.nodeValue=value;
+// Build a reverse Persian dictionary so switching from English/Russian back to Persian works too.
+Object.keys(maps.en).forEach(function(k){var v=maps.en[k];if(v&&v!==k&&!Object.prototype.hasOwnProperty.call(maps.fa,v))maps.fa[v]=k;});
+Object.keys(maps.ru).forEach(function(k){var v=maps.ru[k];if(v&&v!==k&&!Object.prototype.hasOwnProperty.call(maps.fa,v))maps.fa[v]=k;});
+function translateValue(text, dict){
+  const raw=String(text||"");
+  if(Object.prototype.hasOwnProperty.call(dict,raw)) return dict[raw];
+  let out=raw;
+  Object.keys(dict).sort((a,b)=>b.length-a.length).forEach(k=>{
+    if(k.length>1 && out.includes(k)) out=out.split(k).join(dict[k]);
+  });
+  return out;
 }
-function translateAttributes(el,dict){
-  ['placeholder','title','aria-label','alt','data-tooltip','aria-description'].forEach(attr=>{
-    if(!el.hasAttribute(attr)) return;
-    const original=el.getAttribute('data-i18n-'+attr) ?? el.getAttribute(attr);
-    if(!el.hasAttribute('data-i18n-'+attr)) el.setAttribute('data-i18n-'+attr,original);
-    const raw=el.getAttribute('data-i18n-'+attr);
-    if(Object.prototype.hasOwnProperty.call(dict,raw)) el.setAttribute(attr,dict[raw]);
+function translateElement(el, dict){
+  if(!el || el.nodeType!==1) return;
+  if(el.matches("script,style,svg,path,circle,defs,linearGradient,stop,filter,feGaussianBlur,feMerge,feMergeNode")) return;
+  if(el.matches("input,textarea,select")){
+    if(el.placeholder && !el.dataset.i18nPlaceholderOriginal) el.dataset.i18nPlaceholderOriginal=el.placeholder;
+    if(el.dataset.i18nPlaceholderOriginal) el.placeholder=translateValue(el.dataset.i18nPlaceholderOriginal,dict);
+    return;
+  }
+  el.childNodes.forEach(node=>{
+    if(node.nodeType===3){
+      if(!node.__i18nOriginal) node.__i18nOriginal=node.nodeValue;
+      node.nodeValue=translateValue(node.__i18nOriginal,dict);
+    }
   });
 }
+let applying=false;
 function setLanguage(lang){
-  if(!maps[lang]) lang='en';
+  if(!maps[lang]) lang="en";
   const root=document.documentElement, body=document.body;
-  root.lang=lang;
-  root.dir=lang==='fa'?'rtl':'ltr';
-  body.classList.remove('lang-en','lang-ru','lang-fa');
-  body.classList.add('lang-'+lang);
-  document.querySelectorAll('[data-lang-choice]').forEach(x=>x.classList.toggle('active',x.dataset.langChoice===lang));
-  const menu=document.getElementById('languageMenu'); if(menu) menu.hidden=true;
-  const btn=document.getElementById('languageToggle');
-  if(btn){
-    btn.title=lang==='fa'?'تغییر زبان':lang==='ru'?'Сменить язык':'Change language';
-    btn.setAttribute('aria-label',btn.title);
-  }
-  const dict=maps[lang]||{};
-  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode(node){
-    if(!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-    const p=node.parentElement;
-    if(!p || ['SCRIPT','STYLE','NOSCRIPT'].includes(p.tagName)) return NodeFilter.FILTER_REJECT;
-    if(p.closest('#languageMenu')) return NodeFilter.FILTER_REJECT;
-    return NodeFilter.FILTER_ACCEPT;
-  }});
-  const nodes=[]; let n; while(n=walker.nextNode()) nodes.push(n);
-  nodes.forEach(node=>translateTextNode(node,dict));
-  document.querySelectorAll('input,textarea,select,option,button,a,img,[aria-label],[title]').forEach(el=>translateAttributes(el,dict));
+  root.lang=lang; root.dir=lang==="fa"?"rtl":"ltr";
+  body.classList.toggle("lang-en",lang==="en"); body.classList.toggle("lang-ru",lang==="ru"); body.classList.toggle("lang-fa",lang==="fa");
+  document.querySelectorAll("[data-lang-choice]").forEach(x=>x.classList.toggle("active",x.dataset.langChoice===lang));
+  const menu=document.getElementById("languageMenu"); if(menu) menu.hidden=true;
+  const btn=document.getElementById("languageToggle"); if(btn){btn.title=lang==="fa"?"تغییر زبان":lang==="ru"?"Сменить язык":"Change language";btn.setAttribute("aria-label",btn.title);}
+  const tb=document.getElementById("themeToggle"); if(tb){tb.title=lang==="fa"?"انتخاب تم":lang==="ru"?"Выбор темы":"Choose theme";tb.setAttribute("aria-label",tb.title);}
+  const mb=document.getElementById("menuToggle"); if(mb){mb.title=lang==="fa"?"منو":lang==="ru"?"Меню":"Menu";mb.setAttribute("aria-label",mb.title);}
+  const dict=maps[lang]; applying=true;
+  document.querySelectorAll("body *").forEach(el=>translateElement(el,dict));
+  applying=false;
   try{localStorage.setItem(LANG_KEY,lang)}catch(e){}
 }
-const lb=document.getElementById('languageToggle'), lm=document.getElementById('languageMenu');
-let current='en';
-try{current=localStorage.getItem(LANG_KEY)||'en'}catch(e){}
-if(!maps[current]) current='en';
-if(lb) lb.addEventListener('click',e=>{e.stopPropagation();if(lm)lm.hidden=!lm.hidden});
-if(lm) lm.querySelectorAll('[data-lang-choice]').forEach(x=>x.addEventListener('click',e=>{e.preventDefault();setLanguage(x.dataset.langChoice)}));
-document.addEventListener('click',e=>{if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true});
+const lb=document.getElementById("languageToggle"), lm=document.getElementById("languageMenu");
+let current="en"; try{current=localStorage.getItem(LANG_KEY)||"en"}catch(e){}
+if(!maps[current]) current="en";
+if(lb) lb.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();if(lm) lm.hidden=!lm.hidden;});
+if(lm) lm.querySelectorAll("[data-lang-choice]").forEach(x=>x.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();setLanguage(x.dataset.langChoice);}));
+document.addEventListener("click",function(e){if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true;});
 setLanguage(current);
+const observer=new MutationObserver(function(records){if(applying)return;const lang=document.documentElement.lang||"en";const dict=maps[lang]||maps.en;records.forEach(r=>{r.addedNodes.forEach(n=>{if(n.nodeType===1){translateElement(n,dict);n.querySelectorAll&&n.querySelectorAll("*").forEach(x=>translateElement(x,dict));}});});});
+observer.observe(document.body,{childList:true,subtree:true});
 })();"""
-
 
 def page(title, body, logged=True, notice="", kind="ok"):
     nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a>{''.join(f'<a class="drawer-link" href="{html.escape(b.get("url",""), quote=True)}" target="_blank" rel="noopener noreferrer">{ui_icon("link", "drawer-icon")}<span><strong>{html.escape(b.get("icon","🔗"))} {html.escape(b.get("name","دکمه"))}</strong><small>لینک سفارشی</small></span></a>' for b in idont_load_ui_settings().get("buttons",[]) if _safe_button_url(b.get("url","")))}<a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
