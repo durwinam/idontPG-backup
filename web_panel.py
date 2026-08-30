@@ -1403,6 +1403,14 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 .neo-icon.inline-icon{flex-basis:18px;width:18px;height:18px;border:0;background:transparent;box-shadow:none;color:currentColor;border-radius:0}
 .neo-icon.inline-icon svg{width:18px;height:18px;filter:none}
 .neo-icon:hover{transform:translateY(-2px) scale(1.03);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 0 26px rgba(76,201,240,.14)}
+/* v5.6.4 small meta/inline icons: glow belongs to the SVG, never to the icon box. */
+.neo-icon.meta-icon,.neo-icon.inline-icon{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important;border-radius:0!important;overflow:visible!important}
+.neo-icon.meta-icon:hover,.neo-icon.inline-icon:hover{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important;border-radius:0!important;transform:none!important}
+.neo-icon.meta-icon svg{background:transparent!important;box-shadow:none!important;filter:drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor)!important}
+.neo-icon.inline-icon svg{background:transparent!important;box-shadow:none!important;filter:drop-shadow(0 0 2px currentColor)!important}
+body.custom .neo-icon.meta-icon,body.custom .neo-icon.inline-icon{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important}
+body.custom .neo-icon.meta-icon svg,body.custom .neo-icon.inline-icon svg{background:transparent!important;box-shadow:none!important}
+
 /* v5.6.4: light theme icon polish — keep SVG icons readable and visually matched to the light glass UI. */
 .light .neo-icon{color:#6d28d9;background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(237,233,254,.72) 58%,rgba(252,231,243,.68));border-color:rgba(109,40,217,.20);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 8px 24px rgba(109,40,217,.12),0 0 18px rgba(236,72,153,.08)}
 .light .neo-icon:before{background:radial-gradient(circle,rgba(255,255,255,.72),transparent 68%)}
