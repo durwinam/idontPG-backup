@@ -940,45 +940,132 @@ def _node_endpoint(node):
     return base.rstrip("/") + "/stats/"
 
 
+def _node_ca_text(node):
+    ca = str(node.get("server_ca") or node.get("serverCA") or "")
+    # Panel JSON normally decodes escaped newlines for us, but keep this
+    # tolerant of older installations that stored the PEM with literal \n.
+    return ca.replace("\\n", "\n").strip()
+
+
 def _node_ssl_context(node):
-    ca = str(node.get("server_ca") or node.get("serverCA") or "").strip()
+    ca = _node_ca_text(node)
     if ca:
         ctx = ssl.create_default_context()
         try:
             ctx.load_verify_locations(cadata=ca)
             return ctx
         except Exception:
-            # A malformed/stale CA should not make the whole dashboard fail.
-            pass
-    return ssl.create_default_context()
+            # Some older nodes expose an incomplete/stale CA. We still try the
+            # connection with certificate verification disabled as a fallback.
+            return ssl._create_unverified_context()
+    # PasarGuard Nodes commonly use a self-signed certificate.
+    return ssl._create_unverified_context()
 
 
-def _node_stats_raw(node):
-    url = _node_endpoint(node)
-    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
-    if not url or not api_key:
-        return None
-    req = urllib.request.Request(url, data=_pb_stat_request(stat_type=4), method="GET")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    # Some current Node bridge deployments use x-api-key; sending both is
-    # harmless and keeps compatibility with older/newer Node builds.
-    req.add_header("X-Api-Key", api_key)
-    req.add_header("Content-Type", "application/x-protobuf")
-    req.add_header("Accept", "application/x-protobuf")
-    req.add_header("User-Agent", f"{APP}/{VERSION}")
-    with urllib.request.urlopen(req, timeout=4, context=_node_ssl_context(node)) as response:
-        stats = _pb_parse_stat_response(response.read())
+def _node_grpc_target(node):
+    address = str(node.get("address") or node.get("host") or node.get("ip") or "").strip()
+    port = str(node.get("port") or "").strip()
+    if not address:
+        return ""
+    if "://" in address:
+        parsed = urllib.parse.urlparse(address)
+        address = parsed.hostname or address
+        if not port and parsed.port:
+            port = str(parsed.port)
+    address = address.strip("[]")
+    if ":" in address and address.count(":") > 1:
+        address = f"[{address}]"
+    return f"{address}:{port}" if port else address
+
+
+def _node_stats_total(stats):
     total = 0
     for item in stats:
-        # UsersStat returns per-user uplink/downlink counters. Ignore any
-        # unrelated aggregate records to avoid double-counting.
         direction = str(item.get("type") or "").lower()
         if direction in ("uplink", "downlink"):
             total += max(0, int(item.get("value") or 0))
     if total == 0:
-        # Be tolerant of Node builds that omit the direction field.
         total = sum(max(0, int(x.get("value") or 0)) for x in stats)
     return total
+
+
+def _node_stats_grpc(node):
+    """Query GetStats using the Node gRPC service without generated stubs.
+
+    The protobuf wire format is tiny and already implemented above, so the
+    panel only needs the optional grpcio transport. This matches the official
+    Node client path and is more reliable than assuming every Node exposes
+    the protobuf REST transport on the same port.
+    """
+    try:
+        import grpc
+    except Exception:
+        return None
+
+    target = _node_grpc_target(node)
+    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
+    if not target or not api_key:
+        return None
+
+    ca = _node_ca_text(node)
+    credentials = grpc.ssl_channel_credentials(root_certificates=ca.encode("utf-8") if ca else None)
+    channel = grpc.secure_channel(target, credentials)
+    try:
+        rpc = channel.unary_unary(
+            "/service.NodeService/GetStats",
+            request_serializer=lambda payload: payload,
+            response_deserializer=lambda payload: payload,
+        )
+        response = rpc(
+            _pb_stat_request(stat_type=4),
+            metadata=(("x-api-key", api_key),),
+            timeout=4,
+        )
+        return _node_stats_total(_pb_parse_stat_response(response))
+    finally:
+        channel.close()
+
+
+def _node_stats_rest(node):
+    url = _node_endpoint(node)
+    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
+    if not url or not api_key:
+        return None
+    # Current Node docs use Authorization: Bearer, while deployed clients also
+    # use x-api-key. Try both forms so old/new Node builds are covered.
+    last_error = None
+    for auth_headers in (
+        {"Authorization": f"Bearer {api_key}"},
+        {"X-Api-Key": api_key},
+    ):
+        for endpoint in (url, url.rstrip("/") + "/"):
+            try:
+                req = urllib.request.Request(endpoint, data=_pb_stat_request(stat_type=4), method="GET")
+                for key, value in auth_headers.items():
+                    req.add_header(key, value)
+                req.add_header("Content-Type", "application/x-protobuf")
+                req.add_header("Accept", "application/x-protobuf")
+                req.add_header("User-Agent", f"{APP}/{VERSION}")
+                with urllib.request.urlopen(req, timeout=4, context=_node_ssl_context(node)) as response:
+                    return _node_stats_total(_pb_parse_stat_response(response.read()))
+            except Exception as exc:
+                last_error = exc
+    if last_error:
+        raise last_error
+    return None
+
+
+def _node_stats_raw(node):
+    # Prefer gRPC: this is the transport used by the official PasarGuard
+    # exporter and directly calls NodeService.GetStats with x-api-key.
+    try:
+        value = _node_stats_grpc(node)
+        if value is not None:
+            return value
+    except Exception:
+        pass
+    # Fall back to the documented protobuf REST endpoint.
+    return _node_stats_rest(node)
 
 
 def _load_node_traffic_state():

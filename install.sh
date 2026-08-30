@@ -126,12 +126,14 @@ pip3 install \
     urllib3 \
     paramiko \
     pysocks \
+    grpcio \
     >/dev/null 2>&1 || \
 pip3 install \
     requests \
     urllib3 \
     paramiko \
     pysocks \
+    grpcio \
     >/dev/null 2>&1 || true
 
 # ──────────────────────────────────────────────────────────────────────────────

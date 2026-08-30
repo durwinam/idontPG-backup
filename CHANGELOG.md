@@ -1,3 +1,11 @@
+## v5.5.4-node-traffic-fix2
+
+- Fixed direct PasarGuard Node traffic collection.
+- Prefer `NodeService.GetStats` over gRPC with the Node `x-api-key`, matching the official Node client path.
+- Keep protobuf REST `/stats/` as a fallback.
+- Improved self-signed Node CA handling and PEM newline normalization.
+- Traffic counters remain cumulative across Node/Xray counter resets.
+
 ## v5.5.4-final5 — status dot fix
 
 - Fixed status indicators being stretched into square/rectangular boxes by generic meta-row span selectors.
