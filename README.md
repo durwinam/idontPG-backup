@@ -4,9 +4,12 @@
 
 ### Advanced Backup & Migration Suite for PasarGuard
 
-**Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
-برگرفته از CIAUB
+## Preview
+
+![idontPG-backup Web Panel Preview](github-preview.png)
+
+**Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
@@ -27,7 +30,7 @@
 
 🌐WEB PANEL
 
-🔹 پنل وب مدرن و حرفه‌ای با طراحی شیشه ای
+🔹 پنل وب مدرن و حرفه‌ای با طراحی Glass
 
 این پروژه علاوه بر قابلیت‌های اصلی، شامل یک پنل وب مدرن، سبک و حرفه‌ای با رابط کاربری Glass نیز می‌باشد. ✨
 
@@ -42,6 +45,12 @@ Web panel_URL:http://IP-SERVER:5000
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/durwinam/idontPG-backup/main/install.sh)"
+```
+
+لینک جایگزین (در صورت عدم دسترسی):
+
+```bash
+sudo bash -c "$(curl -sL https://raw.githack.com/durwinam/idontPG-backup/main/install.sh)"
 ```
 پس از نصب:
 ```bash
@@ -84,8 +93,8 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | قابلیت | توضیح |
 |---|---|
 | 📦 Full Backup | تهیه نسخه کامل از اطلاعات |
-| ♻️ Restore | بازیابی مستقیم Backup |(به زودی)
-| 🚚 Migration | انتقال مستقیم به سرور جدید | ..به زودی
+| ♻️ Restore | بازیابی مستقیم Backup |
+| 🚚 Migration | انتقال مستقیم به سرور جدید |
 | 🗃️ Multi-Database | پشتیبانی از چند دیتابیس |
 | 🤖 Telegram | ارسال خودکار Backup |
 | 🧩 Large Files | تقسیم خودکار فایل‌های حجیم |
@@ -95,7 +104,6 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | 🔐 Secure Storage | محافظت از اطلاعات حساس |
 | 🖥️ Web Panel | مدیریت Backup از طریق مرورگر |
 | 💻 CLI | مدیریت کامل از طریق Terminal |
-|
 
 ---
 
