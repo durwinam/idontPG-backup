@@ -4,11 +4,6 @@
 
 ### Advanced Backup & Migration Suite for PasarGuard
 
-دیتابیس بکاپ برگرفته از CIAUB
-## Preview
-
-![idontPG-backup Web Panel Preview](github-preview.png)
-
 **Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
