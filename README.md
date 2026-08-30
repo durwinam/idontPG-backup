@@ -98,11 +98,10 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 - 🤖 Backup خودکار Telegram
 - 🐳 محیط‌های Docker
 
----
-
 # ⚡ قابلیت‌های اصلی
 
 | قابلیت | توضیح |
+|---|---|
 | 🐳 Docker Environment | پشتیبانی و مدیریت در محیط Docker |
 | 🤖 Automatic Telegram Backup | بکاپ خودکار و ارسال به Telegram |
 | 🗄️ Backup Storage | نگهداری و مدیریت Backupها |
@@ -121,7 +120,7 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | ♻️ Restore | 🚧 به‌زودی |
 | 🚚 Migration | 🚧 به‌زودی |
 | 🔄 Transfer | 🚧 به‌زودی |
----
+
 🗄️ Database Engine Support
 
 سیستم قبل از شروع عملیات، Backend نصب‌شده روی PasarGuard را
