@@ -7,6 +7,7 @@
 **Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
 برگرفته از CIAUB
+
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
 <div align="center">
@@ -41,12 +42,6 @@ Web panel_URL:http://IP-SERVER:5000
 
 ```bash
 sudo bash -c "$(curl -sL https://raw.githubusercontent.com/durwinam/idontPG-backup/main/install.sh)"
-```
-
-لینک جایگزین (در صورت عدم دسترسی):
-
-```bash
-sudo bash -c "$(curl -sL https://raw.githack.com/durwinam/idontPG-backup/main/install.sh)"
 ```
 پس از نصب:
 ```bash
@@ -89,8 +84,8 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | قابلیت | توضیح |
 |---|---|
 | 📦 Full Backup | تهیه نسخه کامل از اطلاعات |
-| ♻️ Restore | بازیابی مستقیم Backup |
-| 🚚 Migration | انتقال مستقیم به سرور جدید |
+| ♻️ Restore | بازیابی مستقیم Backup |(به زودی)
+| 🚚 Migration | انتقال مستقیم به سرور جدید | ..به زودی
 | 🗃️ Multi-Database | پشتیبانی از چند دیتابیس |
 | 🤖 Telegram | ارسال خودکار Backup |
 | 🧩 Large Files | تقسیم خودکار فایل‌های حجیم |
@@ -100,6 +95,7 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 | 🔐 Secure Storage | محافظت از اطلاعات حساس |
 | 🖥️ Web Panel | مدیریت Backup از طریق مرورگر |
 | 💻 CLI | مدیریت کامل از طریق Terminal |
+|
 
 ---
 
