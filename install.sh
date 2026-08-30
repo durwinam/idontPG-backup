@@ -41,6 +41,7 @@ WEB_TMP="/tmp/idontpg-web-panel.py"
 
 WEB_ASSET_DIR="/usr/local/share/idontPG-backup"
 WEB_LOGO_PATH="${WEB_ASSET_DIR}/logo.png"
+WEB_PG_PATH="${WEB_ASSET_DIR}/pasarguard-logo.png"
 
 WEB_PANEL_URL="${RAW_BASE}/main/web_panel.py"
 WEB_LOGO_URL="${RAW_BASE}/main/web/static/logo.png"
