@@ -1,0 +1,1 @@
+# IDONT Admin UI adapter. Import from web_panel.py to expose IDONT_ADMIN_PATH.\nfrom web_panel import IDONT_ADMIN_PATH, idont_load_ui_settings, idont_save_ui_settings, idont_admin_html, idont_apply_ui_settings\n
