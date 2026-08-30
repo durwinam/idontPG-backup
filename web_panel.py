@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.5.4"
+VERSION = "5.5.4-node-traffic-fix3"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
 STATE_DIR = Path("/etc/idontPG-backup")
@@ -791,15 +791,18 @@ def _sum_all_panel_users(token):
 
 
 # ── PasarGuard Node traffic (direct Node API) ───────────────────────────────
-# The Node REST API uses protobuf for /stats/. We keep a tiny protobuf codec
-# here instead of adding a heavy runtime dependency to this lightweight panel.
+# Traffic is read from the registered PasarGuard Nodes themselves.  The panel
+# API is used only to discover node address/port/API key/CA.
 NODE_TRAFFIC_FILE = STATE_DIR / "node_traffic.json"
 _NODE_TRAFFIC_CACHE = {"ts": 0.0, "value": None}
 _NODE_TRAFFIC_LOCK = __import__("threading").Lock()
+_NODE_TRAFFIC_LAST_ERROR = ""
 
 
 def _pb_varint(value):
     value = int(value)
+    if value < 0:
+        value &= (1 << 64) - 1
     out = bytearray()
     while value > 0x7F:
         out.append((value & 0x7F) | 0x80)
@@ -825,7 +828,6 @@ def _pb_read_varint(data, pos):
 
 
 def _pb_fields(data):
-    """Yield (field_number, wire_type, value) for a protobuf message."""
     pos = 0
     n = len(data)
     while pos < n:
@@ -836,14 +838,17 @@ def _pb_fields(data):
         if wire == 0:
             value, pos = _pb_read_varint(data, pos)
         elif wire == 1:
-            if pos + 8 > n: raise ValueError("truncated fixed64")
+            if pos + 8 > n:
+                raise ValueError("truncated fixed64")
             value, pos = data[pos:pos + 8], pos + 8
         elif wire == 2:
             size, pos = _pb_read_varint(data, pos)
-            if pos + size > n: raise ValueError("truncated bytes")
+            if pos + size > n:
+                raise ValueError("truncated bytes")
             value, pos = data[pos:pos + size], pos + size
         elif wire == 5:
-            if pos + 4 > n: raise ValueError("truncated fixed32")
+            if pos + 4 > n:
+                raise ValueError("truncated fixed32")
             value, pos = data[pos:pos + 4], pos + 4
         else:
             raise ValueError(f"unsupported protobuf wire type {wire}")
@@ -857,9 +862,7 @@ def _pb_stat_request(name="", reset=False, stat_type=4):
         body += b"\x0a" + _pb_varint(len(raw)) + raw
     if reset:
         body += b"\x10\x01"
-    # StatType.UsersStat = 4 in the official Node protobuf.
-    if stat_type:
-        body += b"\x18" + _pb_varint(stat_type)
+    body += b"\x18" + _pb_varint(stat_type)  # UsersStat = 4
     return bytes(body)
 
 
@@ -870,17 +873,17 @@ def _pb_parse_stat_response(data):
             continue
         name = stat_type = link = ""
         amount = 0
-        try:
-            for sf, sw, sv in _pb_fields(value):
-                if sf in (1, 2, 3) and sw == 2:
-                    text = sv.decode("utf-8", "replace")
-                    if sf == 1: name = text
-                    elif sf == 2: stat_type = text
-                    else: link = text
-                elif sf == 4 and sw == 0:
-                    amount = int(sv)
-        except Exception:
-            continue
+        for sf, sw, sv in _pb_fields(value):
+            if sf in (1, 2, 3) and sw == 2:
+                text = sv.decode("utf-8", "replace")
+                if sf == 1:
+                    name = text
+                elif sf == 2:
+                    stat_type = text
+                else:
+                    link = text
+            elif sf == 4 and sw == 0:
+                amount = int(sv)
         stats.append({"name": name, "type": stat_type, "link": link, "value": amount})
     return stats
 
@@ -912,73 +915,82 @@ def _discover_pg_nodes(token):
         page = _node_json_list(payload)
         if not page:
             break
-        marker = json.dumps(page, sort_keys=True, ensure_ascii=False)[:4000]
+        marker = json.dumps(page, sort_keys=True, ensure_ascii=False)[:8000]
         if marker in seen:
             break
         seen.add(marker)
         nodes.extend(page)
+        offset += len(page)
         if len(page) < limit:
             break
-        offset += len(page)
     return nodes
 
 
-def _node_endpoint(node):
-    address = str(node.get("address") or node.get("host") or node.get("ip") or "").strip()
-    port = str(node.get("port") or "").strip()
-    if not address:
-        return ""
-    if "://" in address:
-        base = address.rstrip("/")
-        if port and urllib.parse.urlparse(base).port is None:
-            base += ":" + port
-    else:
-        # IPv6 literals need brackets when a port is appended.
-        if ":" in address and not address.startswith("[") and address.count(":") > 1:
-            address = f"[{address}]"
-        base = "https://" + address + (f":{port}" if port else "")
-    return base.rstrip("/") + "/stats/"
+def _node_value(node, *keys):
+    for key in keys:
+        value = node.get(key)
+        if value not in (None, ""):
+            return value
+    # Be tolerant of newer panel responses that nest connection details.
+    for parent in ("config", "connection", "node", "settings"):
+        obj = node.get(parent)
+        if isinstance(obj, dict):
+            for key in keys:
+                value = obj.get(key)
+                if value not in (None, ""):
+                    return value
+    return ""
+
+
+def _node_address(node):
+    value = str(_node_value(node, "address", "host", "ip", "domain", "hostname", "server") or "").strip()
+    if "//" in value:
+        parsed = urllib.parse.urlparse(value)
+        value = parsed.hostname or value
+    return value.strip("[]")
+
+
+def _node_port(node):
+    value = _node_value(node, "port", "service_port", "grpc_port", "node_port")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _node_api_key(node):
+    return str(_node_value(node, "api_key", "apiKey", "key") or "").strip()
 
 
 def _node_ca_text(node):
-    ca = str(node.get("server_ca") or node.get("serverCA") or "")
-    # Panel JSON normally decodes escaped newlines for us, but keep this
-    # tolerant of older installations that stored the PEM with literal \n.
+    ca = str(_node_value(node, "server_ca", "serverCA", "ca", "certificate") or "")
     return ca.replace("\\n", "\n").strip()
 
 
 def _node_ssl_context(node):
     ca = _node_ca_text(node)
     if ca:
-        ctx = ssl.create_default_context()
         try:
+            ctx = ssl.create_default_context()
             ctx.load_verify_locations(cadata=ca)
             return ctx
         except Exception:
-            # Some older nodes expose an incomplete/stale CA. We still try the
-            # connection with certificate verification disabled as a fallback.
-            return ssl._create_unverified_context()
-    # PasarGuard Nodes commonly use a self-signed certificate.
+            pass
     return ssl._create_unverified_context()
 
 
 def _node_grpc_target(node):
-    address = str(node.get("address") or node.get("host") or node.get("ip") or "").strip()
-    port = str(node.get("port") or "").strip()
+    address = _node_address(node)
+    port = _node_port(node)
     if not address:
         return ""
-    if "://" in address:
-        parsed = urllib.parse.urlparse(address)
-        address = parsed.hostname or address
-        if not port and parsed.port:
-            port = str(parsed.port)
-    address = address.strip("[]")
     if ":" in address and address.count(":") > 1:
         address = f"[{address}]"
     return f"{address}:{port}" if port else address
 
 
 def _node_stats_total(stats):
+    # Current Node returns Stat.type as strings such as uplink/downlink.
     total = 0
     for item in stats:
         direction = str(item.get("type") or "").lower()
@@ -989,23 +1001,12 @@ def _node_stats_total(stats):
     return total
 
 
-def _node_stats_grpc(node):
-    """Query GetStats using the Node gRPC service without generated stubs.
-
-    The protobuf wire format is tiny and already implemented above, so the
-    panel only needs the optional grpcio transport. This matches the official
-    Node client path and is more reliable than assuming every Node exposes
-    the protobuf REST transport on the same port.
-    """
-    try:
-        import grpc
-    except Exception:
-        return None
-
+def _node_grpc_call(node, auth_header):
+    import grpc
     target = _node_grpc_target(node)
-    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
-    if not target or not api_key:
-        return None
+    key = _node_api_key(node)
+    if not target or not key:
+        raise RuntimeError("node address/port/api_key missing")
 
     ca = _node_ca_text(node)
     credentials = grpc.ssl_channel_credentials(root_certificates=ca.encode("utf-8") if ca else None)
@@ -1013,59 +1014,77 @@ def _node_stats_grpc(node):
     try:
         rpc = channel.unary_unary(
             "/service.NodeService/GetStats",
-            request_serializer=lambda payload: payload,
-            response_deserializer=lambda payload: payload,
+            request_serializer=lambda x: x,
+            response_deserializer=lambda x: x,
         )
         response = rpc(
-            _pb_stat_request(stat_type=4),
-            metadata=(("x-api-key", api_key),),
-            timeout=4,
+            _pb_stat_request(stat_type=4, reset=False),
+            metadata=((auth_header, f"Bearer {key}"),),
+            timeout=6,
         )
         return _node_stats_total(_pb_parse_stat_response(response))
     finally:
         channel.close()
 
 
+def _node_stats_grpc(node):
+    try:
+        import grpc  # noqa: F401
+    except Exception as exc:
+        raise RuntimeError(f"grpcio unavailable: {exc}")
+
+    errors = []
+    # Current docs specify authorization: Bearer. Older deployments may still
+    # accept x-api-key, so retain it as a compatibility attempt.
+    for header in ("authorization", "x-api-key"):
+        try:
+            return _node_grpc_call(node, header)
+        except Exception as exc:
+            errors.append(f"grpc/{header}: {exc}")
+    raise RuntimeError("; ".join(errors))
+
+
 def _node_stats_rest(node):
-    url = _node_endpoint(node)
-    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
-    if not url or not api_key:
-        return None
-    # Current Node docs use Authorization: Bearer, while deployed clients also
-    # use x-api-key. Try both forms so old/new Node builds are covered.
-    last_error = None
-    for auth_headers in (
-        {"Authorization": f"Bearer {api_key}"},
-        {"X-Api-Key": api_key},
+    address = _node_address(node)
+    port = _node_port(node)
+    key = _node_api_key(node)
+    if not address or not port or not key:
+        raise RuntimeError("node address/port/api_key missing")
+    if ":" in address and address.count(":") > 1:
+        host = f"[{address}]"
+    else:
+        host = address
+    url = f"https://{host}:{port}/stats/"
+    body = _pb_stat_request(stat_type=4, reset=False)
+    errors = []
+    for headers in (
+        {"Authorization": f"Bearer {key}"},
+        {"X-Api-Key": key},
     ):
-        for endpoint in (url, url.rstrip("/") + "/"):
-            try:
-                req = urllib.request.Request(endpoint, data=_pb_stat_request(stat_type=4), method="GET")
-                for key, value in auth_headers.items():
-                    req.add_header(key, value)
-                req.add_header("Content-Type", "application/x-protobuf")
-                req.add_header("Accept", "application/x-protobuf")
-                req.add_header("User-Agent", f"{APP}/{VERSION}")
-                with urllib.request.urlopen(req, timeout=4, context=_node_ssl_context(node)) as response:
-                    return _node_stats_total(_pb_parse_stat_response(response.read()))
-            except Exception as exc:
-                last_error = exc
-    if last_error:
-        raise last_error
-    return None
+        try:
+            req = urllib.request.Request(url, data=body, method="GET", headers={
+                **headers,
+                "Content-Type": "application/x-protobuf",
+                "Accept": "application/x-protobuf",
+                "User-Agent": f"{APP}/{VERSION}",
+            })
+            with urllib.request.urlopen(req, timeout=6, context=_node_ssl_context(node)) as response:
+                payload = response.read()
+            return _node_stats_total(_pb_parse_stat_response(payload))
+        except Exception as exc:
+            errors.append(f"rest/{next(iter(headers))}: {exc}")
+    raise RuntimeError("; ".join(errors))
 
 
 def _node_stats_raw(node):
-    # Prefer gRPC: this is the transport used by the official PasarGuard
-    # exporter and directly calls NodeService.GetStats with x-api-key.
+    # gRPC is the canonical service transport. REST is a documented fallback.
     try:
-        value = _node_stats_grpc(node)
-        if value is not None:
-            return value
-    except Exception:
-        pass
-    # Fall back to the documented protobuf REST endpoint.
-    return _node_stats_rest(node)
+        return _node_stats_grpc(node)
+    except Exception as grpc_error:
+        try:
+            return _node_stats_rest(node)
+        except Exception as rest_error:
+            raise RuntimeError(f"{grpc_error} | {rest_error}")
 
 
 def _load_node_traffic_state():
@@ -1088,13 +1107,8 @@ def _save_node_traffic_state(state):
 
 
 def get_panel_storage_usage():
-    """Return cumulative traffic collected directly from PasarGuard Nodes.
-
-    The panel is used only to discover the registered Nodes (address, port,
-    API key and CA). Traffic itself is read from each Node's protobuf REST
-    /stats/ endpoint with reset=false. A tiny persistent accumulator protects
-    the displayed total when Xray/Panel counters are reset.
-    """
+    """Return cumulative traffic collected directly from connected Nodes."""
+    global _NODE_TRAFFIC_LAST_ERROR
     now = time.time()
     with _NODE_TRAFFIC_LOCK:
         if _NODE_TRAFFIC_CACHE.get("value") is not None and now - _NODE_TRAFFIC_CACHE.get("ts", 0) < 15:
@@ -1102,36 +1116,51 @@ def get_panel_storage_usage():
         try:
             token = _pg_api_token()
             if not token:
+                _NODE_TRAFFIC_LAST_ERROR = "PasarGuard sudo credentials not found"
                 return "قابل دریافت نیست"
             nodes = _discover_pg_nodes(token)
+            if not nodes:
+                _NODE_TRAFFIC_LAST_ERROR = "PasarGuard returned no nodes"
+                return "قابل دریافت نیست"
+
             state = _load_node_traffic_state()
             state_nodes = state.setdefault("nodes", {})
+            successful = 0
+            errors = []
+
             for node in nodes:
                 status = str(node.get("status") or "").lower()
-                if status and status not in ("connected", "online", "active"):
+                if status in ("disabled", "deleted", "offline", "disconnected"):
                     continue
-                key = str(node.get("id") or node.get("name") or node.get("address") or "")
+                key = str(node.get("id") or node.get("name") or _node_address(node) or "")
                 if not key:
                     continue
                 try:
-                    raw = _node_stats_raw(node)
-                except Exception:
+                    raw = int(_node_stats_raw(node))
+                    successful += 1
+                except Exception as exc:
+                    errors.append(f"{key}: {exc}")
                     continue
-                if raw is None:
-                    continue
+
                 previous = state_nodes.get(key, {}) if isinstance(state_nodes.get(key), dict) else {}
                 last_raw = int(previous.get("raw") or 0)
                 accumulated = int(previous.get("total") or 0)
-                # Counter reset/restart: the new raw value is fresh traffic.
                 delta = raw - last_raw if raw >= last_raw else raw
                 accumulated += max(0, delta)
                 state_nodes[key] = {"raw": raw, "total": accumulated, "updated": now}
+
+            if successful == 0:
+                _NODE_TRAFFIC_LAST_ERROR = " | ".join(errors)[-1800:] or "all nodes failed"
+                return "قابل دریافت نیست"
+
             total = sum(max(0, int(v.get("total") or 0)) for v in state_nodes.values() if isinstance(v, dict))
             state["updated"] = now
             _save_node_traffic_state(state)
+            _NODE_TRAFFIC_LAST_ERROR = ""
             _NODE_TRAFFIC_CACHE.update({"ts": now, "value": total})
             return _format_bytes(total)
-        except Exception:
+        except Exception as exc:
+            _NODE_TRAFFIC_LAST_ERROR = str(exc)[-1800:]
             return "قابل دریافت نیست"
 
 def get_disk_info():
