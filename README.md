@@ -13,6 +13,8 @@
 </div>
 <br>
 
+![idontPG-backup Preview](https://raw.githubusercontent.com/durwinam/idontPG-backup/main/github-preview.png)
+
 [![Version](https://img.shields.io/badge/version-v5.6.4-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
