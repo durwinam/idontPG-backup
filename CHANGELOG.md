@@ -1,3 +1,9 @@
+## v5.6.1
+
+- Unified project version across CLI, Web Panel, updater metadata and documentation.
+- Keeps the existing PasarGuard Node traffic/statistics integration and admin-path functionality intact.
+- Web Panel release identifier is now `5.6.1`.
+
 ## v5.5.4-node-traffic-fix3
 
 - Reworked PasarGuard Node traffic collection against the current Node API contract.
