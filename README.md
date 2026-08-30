@@ -103,26 +103,26 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 ⚡ قابلیت‌های اصلی
 
 قابلیت| توضیح
-🐳 Docker Environment| پشتیبانی و مدیریت در محیط Docker
-🤖 Automatic Telegram Backup| بکاپ خودکار و ارسال به Telegram
-🗄️ Backup Storage| نگهداری و مدیریت Backupها
-🖥️ Panel & Node Backup| بکاپ از PasarGuard Panel و PG-Node
-📦 Full Backup| تهیه نسخه کامل از اطلاعات
-🧩 Large File Splitting| تقسیم خودکار فایل‌های حجیم
-⏱️ Backup Scheduler| اجرای Backup در زمان‌ها و بازه‌های مختلف
-🔎 Auto Backend Detection| تشخیص خودکار Backend
-🔐 Sensitive Data Protection| محافظت از اطلاعات حساس
-🌐 Web Management| مدیریت Backup از طریق مرورگر
-💻 CLI Management| مدیریت Backup از طریق Terminal
-📊 System Resource Monitor| نمایش میزان مصرف CPU، RAM و Disk
-🕒 Recent Activities| نمایش ۳ فعالیت اخیر
-📤 Manual Backup| ارسال Backup به‌صورت دستی
-🤖 Telegram Bot Test| ارسال پیام تست به ربات Telegram
-♻️ Restore| به‌زودی
-🚚 Migration| به‌زودی
-🔄 Transfer| به‌زودی
-
----
+🐳 Docker | قابلیت | توضیح |
+|---|---|
+| 🐳 Docker Environment | پشتیبانی و مدیریت در محیط Docker |
+| 🤖 Automatic Telegram Backup | بکاپ خودکار و ارسال به Telegram |
+| 🗄️ Backup Storage | نگهداری و مدیریت Backupها |
+| 🖥️ Panel & Node Backup | بکاپ از PasarGuard Panel و PG-Node |
+| 📦 Full Backup | تهیه نسخه کامل از اطلاعات |
+| 🧩 Large File Splitting | تقسیم خودکار فایل‌های حجیم |
+| ⏱️ Backup Scheduler | اجرای Backup در زمان‌ها و بازه‌های مختلف |
+| 🔎 Auto Backend Detection | تشخیص خودکار Backend |
+| 🔐 Sensitive Data Protection | محافظت از اطلاعات حساس |
+| 🌐 Web Management | مدیریت Backup از طریق مرورگر |
+| 💻 CLI Management | مدیریت Backup از طریق Terminal |
+| 📊 System Resource Monitor | نمایش میزان مصرف CPU، RAM و Disk |
+| 🕒 Recent Activities | نمایش ۳ فعالیت اخیر |
+| 📤 Manual Backup | ارسال Backup به‌صورت دستی |
+| 🤖 Telegram Bot Test | ارسال پیام تست به ربات Telegram |
+| ♻️ Restore | 🚧 به‌زودی |
+| 🚚 Migration | 🚧 به‌زودی |
+| 🔄 Transfer | 🚧 به‌زودی |
 
 🗄️ Database Engine Support
 
