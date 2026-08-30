@@ -1,3 +1,9 @@
+## v5.6.2
+
+- Fixed Web Panel HTML/CSS rendering so stylesheet content is not shown as page text.
+- Fixed admin customization save flow.
+- Kept admin controls isolated behind the private admin path/session.
+
 ## v5.6.1
 
 - Unified project version across CLI, Web Panel, updater metadata and documentation.

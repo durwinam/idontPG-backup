@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.6.1"
+VERSION = "5.6.2"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
@@ -1434,7 +1434,7 @@ def ui_theme_css():
     t=u.get("theme",{}); bg=u.get("background",{}).get("value","").strip(); p=t.get("primary","#8b5cf6"); a=t.get("secondary","#22d3ee")
     op=float(t.get("glass_opacity",.58)); blur=int(t.get("blur",18)); radius=int(t.get("radius",20)); fs=int(t.get("font_size",15)); glow=float(t.get("glow",.72))
     safe_bg=bg.replace("</","")[:600]
-    return f'<style id="idont-theme">:root{{--accent:{html.escape(p)};--accent2:{html.escape(a)};--glass:rgba(15,18,31,{op:.2f});--glass2:rgba(255,255,255,{min(.25,op*.12):.2f});--theme-radius:{radius}px;--theme-blur:{blur}px;--theme-font:{fs}px;--theme-glow:{glow}}}body{{font-size:var(--theme-font)}}.glass{{border-radius:var(--theme-radius)!important;backdrop-filter:blur(var(--theme-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--theme-blur)) saturate(145%)}}body{{background:{safe_bg or "var(--bg)"}!important}}.btn.primary{{box-shadow:0 10px 30px rgba(139,92,246,{glow:.2f})}}</style>'
+    return f':root{{--accent:{html.escape(p)};--accent2:{html.escape(a)};--glass:rgba(15,18,31,{op:.2f});--glass2:rgba(255,255,255,{min(.25,op*.12):.2f});--theme-radius:{radius}px;--theme-blur:{blur}px;--theme-font:{fs}px;--theme-glow:{glow}}}body{{font-size:var(--theme-font)}}.glass{{border-radius:var(--theme-radius)!important;backdrop-filter:blur(var(--theme-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--theme-blur)) saturate(145%)}}body{{background:{safe_bg or "var(--bg)"}!important}}.btn.primary{{box-shadow:0 10px 30px rgba(139,92,246,{glow:.2f})}}'
 
 def page(title, body, logged=True, notice="", kind="ok"):
     nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>Backup Control Center</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
@@ -1762,7 +1762,7 @@ class Handler(BaseHTTPRequestHandler):
             for k,label in [("active","فعال"),("inactive","غیرفعال"),("warning","هشدار"),("info","اطلاعات")]:
                 em=ui['emojis'][k]
                 body+=f'<div class="emoji-editor"><b>{label}</b><input name="emoji_{k}" value="{e(em["icon"])}"><input name="emoji_color_{k}" value="{e(em["color"])}"><input name="emoji_glow_{k}" type="number" min="0" max="1" step=".05" value="{em.get("glow",.72)}"><input name="emoji_speed_{k}" type="number" min=".3" max="4" step=".1" value="{em.get("speed",1.35)}"></div>'
-            body+=f'''</div></div><div class="glass wide admin-section"><h3 class="title">➕ دکمه سفارشی</h3><div class="field"><label>نام</label><input name="button_name"></div><div class="field"><label>آیکون</label><input name="button_icon" value="🔗"></div><div class="field"><label>لینک</label><input name="button_url" placeholder="https://..."></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره همه تغییرات</button></div></div></form>'''
+            body+=f'''</div></div><div class="glass wide admin-section"><h3 class="title">➕ دکمه سفارشی</h3><div class="field"><label>نام</label><input name="button_name"></div><div class="field"><label>آیکون</label><input name="button_icon" value="🔗"></div><div class="field"><label>لینک</label><input name="button_url" placeholder="https://..."></div><div class="actions"><button class="btn primary" type="submit" name="save_settings" value="1">💾 ذخیره همه تغییرات</button></div></div></form>'''
             self.send_html(page("Admin", body)); return
 
         if not self.logged():
