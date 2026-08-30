@@ -1,4 +1,9 @@
-## v5.6.3
+## v5.6.4
+
+- Improved light-theme icon styling for better contrast and visual consistency.
+- Adjusted SVG icon glow, borders, and resource icon colors for light glass mode.
+
+## v5.6.4
 
 - Fixed Web Panel HTML/CSS rendering so stylesheet content is not shown as page text.
 - Fixed admin customization save flow.
