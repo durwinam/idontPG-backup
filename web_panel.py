@@ -30,7 +30,7 @@ VERSION = "5.6.1"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
-STATE_DIR = Path("/etc/idontPG-backup")
+STATE_DIR = Path(os.environ.get("IDONTPG_STATE_DIR", "/etc/idontPG-backup"))
 CONFIG = STATE_DIR / "web.json"
 SCRIPT = Path(__file__).resolve()
 LOGO_CANDIDATES = [SCRIPT.parent / "web" / "static" / "logo.png", Path("/usr/local/share/idontPG-backup/logo.png")]
@@ -40,7 +40,9 @@ CORE_CANDIDATES = [
     SCRIPT.parent / "pg_backup.py",
 ]
 SESSIONS = {}
+ADMIN_LOGIN_ATTEMPTS = {}
 SESSION_TTL = 12 * 60 * 60
+ADMIN_SESSION_TTL = 2 * 60 * 60
 
 
 def load_core():
@@ -1426,10 +1428,18 @@ body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.86),rgba(
 
 
 
+def ui_theme_css():
+    try: u=idont_load_ui_settings()
+    except Exception: return ""
+    t=u.get("theme",{}); bg=u.get("background",{}).get("value","").strip(); p=t.get("primary","#8b5cf6"); a=t.get("secondary","#22d3ee")
+    op=float(t.get("glass_opacity",.58)); blur=int(t.get("blur",18)); radius=int(t.get("radius",20)); fs=int(t.get("font_size",15)); glow=float(t.get("glow",.72))
+    safe_bg=bg.replace("</","")[:600]
+    return f'<style id="idont-theme">:root{{--accent:{html.escape(p)};--accent2:{html.escape(a)};--glass:rgba(15,18,31,{op:.2f});--glass2:rgba(255,255,255,{min(.25,op*.12):.2f});--theme-radius:{radius}px;--theme-blur:{blur}px;--theme-font:{fs}px;--theme-glow:{glow}}}body{{font-size:var(--theme-font)}}.glass{{border-radius:var(--theme-radius)!important;backdrop-filter:blur(var(--theme-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--theme-blur)) saturate(145%)}}body{{background:{safe_bg or "var(--bg)"}!important}}.btn.primary{{box-shadow:0 10px 30px rgba(139,92,246,{glow:.2f})}}</style>'
+
 def page(title, body, logged=True, notice="", kind="ok"):
-    nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>idontPG-backup</h3><p>Backup Control Center</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a><a class="drawer-link" href="{ADMIN_PATH}">{ui_icon("settings", "drawer-icon")}<span><strong>مدیریت ادمین</strong><small>تنظیمات پنل</small></span></a><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
+    nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>Backup Control Center</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
     notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
-    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><title>{html.escape(title)} · {APP}</title><style>{CSS}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}
+    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}
 
 /* v5.5.0 UI polish: clearer controls, focus states and responsive spacing */
 .btn, button, input[type="submit"] {{
@@ -1464,7 +1474,7 @@ def hidden_csrf(sid):
 
 # ===== IDONT ADMIN CUSTOMIZATION PANEL =====
 IDONT_ADMIN_PATH = "/control-7Kq9M2xP4/"
-IDONT_SETTINGS_DIR = "/var/lib/idontpg/config"
+IDONT_SETTINGS_DIR = os.environ.get("IDONTPG_SETTINGS_DIR", "/var/lib/idontpg/config")
 IDONT_SETTINGS_FILE = os.path.join(IDONT_SETTINGS_DIR, "ui_settings.json")
 
 IDONT_DEFAULT_SETTINGS = {
@@ -1622,6 +1632,15 @@ class Handler(BaseHTTPRequestHandler):
     def logged(self):
         return self.sid() is not None
 
+    def admin_logged(self):
+        sid = self.sid()
+        return bool(sid and SESSIONS.get(sid, {}).get("role") == "admin" and time.time() - SESSIONS[sid].get("created", 0) <= ADMIN_SESSION_TTL)
+
+    def admin_login_page(self, error=""):
+        notice = '<div class="notice bad">' + html.escape(error) + '</div>' if error else ''
+        body = ('<section class="login"><div class="glass login-card"><div class="login-icon-wrap">' + ui_icon("lock", "card-icon login-icon") + '</div><h2>مدیریت خصوصی</h2><p class="sub">این بخش فقط برای مدیر اصلی است.</p>' + notice + '<form method="post" action="' + ADMIN_PATH + '"><div class="field"><label>نام کاربری ادمین</label><input name="admin_username" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="admin_password" minlength="8" required></div><button class="btn primary full">ورود به مدیریت</button></form></div></section>')
+        return page("Admin Login", body, False)
+
     def redirect(self, path):
         self.send_response(302)
         self.send_header("Location", path)
@@ -1708,10 +1727,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_pasarguard_logo(); return
         if path == "/logout":
             sid = self.sid()
+            was_admin = bool(sid and SESSIONS.get(sid, {}).get("role") == "admin")
             if sid: SESSIONS.pop(sid, None)
             self.send_response(302)
             self.send_header("Set-Cookie", "idontpg_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/")
-            self.send_header("Location", "/login")
+            self.send_header("Location", ADMIN_PATH if was_admin else "/login")
             self.end_headers()
             return
         if not c.get("password_hash"):
@@ -1719,6 +1739,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html(page("First Run", body, False)); return
         if path == "/login":
             self.send_html(self.login_page()); return
+        if path == ADMIN_PATH:
+            if not self.admin_logged():
+                self.send_html(self.admin_login_page()); return
+            ui = idont_load_ui_settings(); e = html.escape
+            presets = [("ultra-dark","Ultra Dark","#050507","#7c3aed","#22d3ee"),("aurora","Aurora Glass","#07111b","#8b5cf6","#22d3ee"),("midnight","Midnight Purple","#0b0613","#a855f7","#ec4899"),("cyber","Cyber Neon","#03090a","#22c55e","#06b6d4"),("ocean","Ocean Glass","#041018","#0ea5e9","#2dd4bf"),("ruby","Ruby Night","#100608","#f43f5e","#fb923c")]
+            cards=[]
+            for k,label,bg,a1,a2 in presets:
+                active=' active' if ui.get('theme',{}).get('preset')==k else ''
+                cards.append(f'<button class="theme-card{active}" type="submit" name="theme_preset" value="{k}" style="--preview-bg:{bg};--preview-a:{a1};--preview-b:{a2}"><span class="theme-preview"></span><b>{label}</b></button>')
+            checked=lambda k:' checked' if ui.get('sections',{}).get(k,True) else ''
+            admin_css = '<style>.admin-tabs{display:flex;gap:8px;margin:0 0 16px}.admin-tab{padding:10px 14px;border-radius:13px;border:1px solid var(--line);color:var(--text);text-decoration:none;background:var(--glass2)}.admin-tab.active{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent}.theme-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.theme-card{min-height:115px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.04);color:var(--text);padding:10px;text-align:right;cursor:pointer}.theme-card.active{outline:2px solid var(--accent2);box-shadow:0 0 28px rgba(34,211,238,.18)}.theme-preview{height:58px;border-radius:13px;display:block;margin-bottom:8px;background:radial-gradient(circle at 25% 25%,var(--preview-a),transparent 45%),radial-gradient(circle at 75% 65%,var(--preview-b),transparent 45%),var(--preview-bg)}.admin-section{margin-bottom:16px}.emoji-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.emoji-editor{display:grid;grid-template-columns:90px 1fr 1fr;gap:8px;padding:12px;border:1px solid var(--line);border-radius:15px}@media(max-width:700px){.theme-grid,.emoji-grid{grid-template-columns:1fr}.emoji-editor{grid-template-columns:1fr 1fr}.emoji-editor b{grid-column:1/-1}}</style>'
+            body=f'''<section class="hero"><h2>{ui_icon("settings","hero-icon")} <span class="gradient">مرکز مدیریت</span></h2><p>شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.</p></section>
+{admin_css}
+<div class="admin-tabs"><a class="admin-tab active" href="{ADMIN_PATH}">🎨 شخصی‌سازی</a><a class="admin-tab" href="/">← داشبورد</a></div>
+<form method="post" action="{ADMIN_PATH}">{hidden_csrf(self.sid())}<div class="glass wide admin-section"><div class="card-head"><div><h3 class="title">🎨 شش تم آماده</h3><p class="sub">کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.</p></div></div><div class="theme-grid">{''.join(cards)}</div></div>
+<div class="grid"><article class="glass card"><h3 class="title">🧩 ظاهر</h3><div class="field"><label>رنگ اصلی</label><input name="primary" value="{e(ui['theme']['primary'])}"></div><div class="field"><label>رنگ دوم</label><input name="secondary" value="{e(ui['theme']['secondary'])}"></div><div class="field"><label>پس‌زمینه</label><input name="background" value="{e(ui['background'].get('value',''))}"></div><div class="field"><label>شفافیت Glass</label><input name="glass_opacity" type="number" min=".25" max=".95" step=".01" value="{ui['theme'].get('glass_opacity',.58)}"></div><div class="field"><label>Blur</label><input name="blur" type="number" min="0" max="40" value="{ui['theme'].get('blur',18)}"></div><div class="field"><label>گردی کارت</label><input name="radius" type="number" min="8" max="36" value="{ui['theme'].get('radius',20)}"></div></article>
+<article class="glass card"><h3 class="title">✨ Glow و حرکت</h3><div class="field"><label>شدت Glow</label><input name="glow" type="number" min="0" max="1" step=".05" value="{ui['theme'].get('glow',.72)}"></div><div class="field"><label>سرعت انیمیشن</label><input name="animation_speed" type="number" min=".2" max="3" step=".1" value="{ui['theme'].get('animation_speed',1)}"></div><div class="field"><label>اندازه فونت</label><input name="font_size" type="number" min="11" max="22" value="{ui['theme'].get('font_size',15)}"></div><div class="field"><label>Logo URL</label><input name="logo_url" value="{e(ui['logo'].get('url',''))}"></div><div class="field"><label>عرض Logo</label><input name="logo_width" type="number" min="24" max="240" value="{ui['logo'].get('width',54)}"></div></article>
+<article class="glass card"><h3 class="title">📝 متن و برند</h3><div class="field"><label>نام پنل</label><input name="site_name" value="{e(ui['site_name'])}"></div><div class="field"><label>عنوان داشبورد</label><input name="hero_title" value="{e(ui['texts'].get('hero_title','کنترل کامل Backup'))}"></div><div class="field"><label>توضیح داشبورد</label><input name="hero_subtitle" value="{e(ui['texts'].get('hero_subtitle',''))}"></div><div class="field"><label>عنوان Backup</label><input name="backup_title" value="{e(ui['texts']['backup_title'])}"></div><div class="field"><label>عنوان مصرف</label><input name="traffic_title" value="{e(ui['texts']['traffic_title'])}"></div><div class="field"><label>عنوان فعالیت</label><input name="activity_title" value="{e(ui['texts']['activity_title'])}"></div></article>
+<article class="glass card"><h3 class="title">👁️ بخش‌های داشبورد</h3><label class="toggle"><span>Backup</span><input type="checkbox" name="sec_backup"{checked('backup')}></label><label class="toggle"><span>حجم مصرفی</span><input type="checkbox" name="sec_traffic"{checked('traffic')}></label><label class="toggle"><span>فعالیت‌ها</span><input type="checkbox" name="sec_activity"{checked('activity')}></label><label class="toggle"><span>آمار سرور</span><input type="checkbox" name="sec_server_stats"{checked('server_stats')}></label><div class="field"><label>تعداد فعالیت‌ها</label><input name="activity_limit" type="number" min="1" max="20" value="{ui.get('activity_limit',3)}"></div></article></div>
+<div class="glass wide admin-section"><h3 class="title">😀 Emoji Status</h3><div class="emoji-grid">'''
+            for k,label in [("active","فعال"),("inactive","غیرفعال"),("warning","هشدار"),("info","اطلاعات")]:
+                em=ui['emojis'][k]
+                body+=f'<div class="emoji-editor"><b>{label}</b><input name="emoji_{k}" value="{e(em["icon"])}"><input name="emoji_color_{k}" value="{e(em["color"])}"><input name="emoji_glow_{k}" type="number" min="0" max="1" step=".05" value="{em.get("glow",.72)}"><input name="emoji_speed_{k}" type="number" min=".3" max="4" step=".1" value="{em.get("speed",1.35)}"></div>'
+            body+=f'''</div></div><div class="glass wide admin-section"><h3 class="title">➕ دکمه سفارشی</h3><div class="field"><label>نام</label><input name="button_name"></div><div class="field"><label>آیکون</label><input name="button_icon" value="🔗"></div><div class="field"><label>لینک</label><input name="button_url" placeholder="https://..."></div><div class="actions"><button class="btn primary" type="submit">💾 ذخیره همه تغییرات</button></div></div></form>'''
+            self.send_html(page("Admin", body)); return
+
         if not self.logged():
             self.redirect("/login"); return
 
@@ -1727,6 +1773,7 @@ class Handler(BaseHTTPRequestHandler):
 
         status = scheduler_status()
         if path == "/":
+            ui_now = idont_load_ui_settings()
             token = c.get("token") or "تنظیم نشده"
             masked = (token[:8] + "••••••") if len(token) > 8 else token
             status_class = "on" if status == "active" else "off"
@@ -1736,9 +1783,9 @@ class Handler(BaseHTTPRequestHandler):
             panel_used = get_panel_storage_usage()
             panel_status_class = "on" if panel_info["status"] == "Online" else "off"
             panel_url = html.escape(panel_info["url"])
-            body = f'''<section class="hero"><h2>کنترل کامل <span class="gradient">Backup</span></h2><p>همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.</p></section>
+            body = f'''<section class="hero"><h2>{html.escape(ui_now.get("texts",{}).get("hero_title","کنترل کامل Backup"))}</h2><p>{html.escape(ui_now.get("texts",{}).get("hero_subtitle","همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع."))}</p></section>
 <div class="grid">
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">اطلاعات Backup</h3><p class="sub">Backup Information</p></div></div></div>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">{html.escape(ui_now.get("texts",{}).get("backup_title","اطلاعات Backup"))}</h3><p class="sub">Backup Information</p></div></div></div>
 <div class="meta"><div class="meta-row"><span>{ui_icon("backup", "meta-icon")} تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>{ui_icon("disk", "meta-icon")} حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><span class="panel-brand-icon card-icon" aria-label="PasarGuard"><img src="/static/pasarguard-logo.png" alt="PasarGuard" onerror="this.style.display='none';this.parentElement.classList.add('logo-fallback')"><span class="logo-fallback-text">PG</span></span><div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status-wrap">{status_badge('آنلاین' if panel_info['status'] == 'Online' else 'آفلاین', 'ok' if panel_info['status'] == 'Online' else 'bad')}</span></div>
 <div class="meta"><div class="meta-row"><span class="meta-label">{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row has-status"><span class="meta-label">{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span class="meta-label">{ui_icon("traffic", "meta-icon")} مصرف واقعی Node</span><strong title="دریافت مستقیم از PasarGuard Node">{html.escape(panel_used)}</strong></div></div></article>
@@ -1749,7 +1796,7 @@ class Handler(BaseHTTPRequestHandler):
 <p class="empty">زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.</p><div class="actions backup-actions"><a class="btn primary" href="/backup-settings">مدیریت Backup</a><form method="post" action="/backup" style="display:flex;min-width:0">{hidden_csrf(self.sid())}<button class="btn good" type="submit">{ui_icon("backup", "inline-icon")} Backup دستی</button></form></div></article>
 <article class="glass wide"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("test", "card-icon")}<div><h3 class="title">ارسال تست پیام به Telegram</h3><p class="sub">قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.</p></div></div></div><div class="actions"><a class="btn primary" href="/test">{ui_icon("test", "inline-icon")} ارسال پیام تست</a><span class="sub" style="align-self:center">با Chat ID و Topic فعلی ارسال می‌شود.</span></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">Backup بعدی</h3><p class="sub">Next Scheduled Backup</p></div></div>{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</div><div class="meta"><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} زمان باقی‌مانده</span><strong id="backupCountdown">{html.escape(str(_next_backup_seconds(c.get('interval','24'), backup_info.get('latest_mtime')) if status == 'active' else '—'))}</strong></div><div class="meta-row"><span>{ui_icon("settings", "meta-icon")} وضعیت Scheduler</span><strong>{'فعال' if status == 'active' else 'متوقف'}</strong></div></div></article>
-<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("activity", "card-icon")}<div><h3 class="title">آخرین فعالیت‌ها</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
+<article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("activity", "card-icon")}<div><h3 class="title">{html.escape(ui_now.get("texts",{}).get("activity_title","آخرین فعالیت‌ها"))}</h3><p class="sub">Recent Activity</p></div></div></div><div class="activity-list">{''.join(f'<div class="meta-row activity-{html.escape(str(a.get("kind","ok")))}"><span>{html.escape(str(a.get("message","")))}</span><strong>{html.escape(_relative_time(a.get("time")))}</strong></div>' for a in get_recent_activities()) or '<div class="empty">هنوز فعالیتی ثبت نشده.</div>'}</div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("health", "card-icon")}<div><h3 class="title">Health Check</h3><p class="sub">وضعیت سرویس‌ها</p></div></div></div><div class="health-list">{''.join(f'<div class="meta-row has-status"><span class="meta-label">{status_dot("ok" if ok else "bad")} {html.escape(name)}</span><strong>{html.escape(detail)}</strong></div>' for name,ok,detail in get_health_info(c,panel_info))}</div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("disk", "card-icon")}<div><h3 class="title">فضای دیسک</h3><p class="sub">Disk Monitor</p></div></div></div><div class="disk-meter"><div class="disk-bar"><span style="width:{get_disk_info()["percent"]}%"></span></div><div class="meta-row"><span>استفاده‌شده</span><strong>{html.escape(str(get_disk_info()["used"]))}</strong></div><div class="meta-row"><span>آزاد</span><strong>{html.escape(str(get_disk_info()["free"]))}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("chart", "card-icon")}<div><h3 class="title">Backup هفت روز اخیر</h3><p class="sub">Backup Activity</p></div></div></div><div class="mini-chart">{''.join(f'<div class="chart-col"><div class="chart-value">{html.escape(_format_bytes(size)) if size else "0 B"}</div><div class="chart-bar"><span style="height:{pct}%"></span></div><small>{html.escape(label)}</small></div>' for label,size,pct in get_backup_chart())}</div><div class="actions"><a class="btn" href="/backups">{ui_icon("backup", "inline-icon")} مدیریت Backupها</a></div></article>
@@ -1776,12 +1823,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(page("Backup",'<div class="glass"><div class="notice bad">خواندن Backup ناموفق بود.</div></div>'),500)
             return
 
-        if path == ADMIN_PATH:
-            body = f'''<section class="hero"><h2>{ui_icon("settings", "hero-icon")} <span class="gradient">مدیریت ادمین</span></h2><p>تنظیمات قابل تغییر پنل را بدون ویرایش کد مدیریت کنید.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("settings", "card-icon")}<div><h3 class="title">تنظیمات عمومی</h3><p class="sub">Panel Settings</p></div></div></div><form method="post" action="{ADMIN_PATH}">{hidden_csrf(self.sid())}<div class="field"><label>نام نمایشی پنل</label><input name="panel_name" maxlength="80" value="{html.escape(str(c.get("panel_name", APP)))}" required></div><div class="field"><label>تعداد فعالیت‌های اخیر</label><input value="3" readonly><div class="hint">همیشه فقط ۳ فعالیت آخر نمایش داده می‌شود.</div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("account", "card-icon")}<div><h3 class="title">امنیت ورود</h3><p class="sub">Admin Password</p></div></div></div><form method="post" action="{ADMIN_PATH}">{hidden_csrf(self.sid())}<input type="hidden" name="action" value="password"><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password" required><div class="hint">حداقل ۸ کاراکتر. این تنها رمز ورود ادمین است.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password" required></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("lock", "inline-icon")} تغییر رمز</button></div></form></article></div>'''
-            self.send_html(page("Admin", body)); return
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button><a class="btn" href="{ADMIN_PATH}">{ui_icon("settings", "inline-icon")} مدیریت ادمین</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button></div></form></div>'''
             self.send_html(page("Account", body)); return
 
         if path == "/telegram":
@@ -1827,7 +1871,7 @@ class Handler(BaseHTTPRequestHandler):
             username_ok = hmac.compare_digest(data.get("username", "").strip(), canonical_username(c.get("username", "admin")))
             if username_ok and check_password(data.get("password", ""), c):
                 sid = secrets.token_urlsafe(32)
-                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24)}
+                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24), "role": "user"}
                 self.send_response(302)
                 self.send_header("Set-Cookie", "idontpg_session=" + sid + "; HttpOnly; SameSite=Strict; Path=/")
                 self.send_header("Location", "/")
@@ -1835,6 +1879,36 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_html(self.login_page("نام کاربری یا رمز عبور اشتباه است."), 401)
             return
+
+        if path == ADMIN_PATH:
+            if not self.admin_logged():
+                ip=self.client_address[0] if self.client_address else "unknown"; now=time.time(); recent=[x for x in ADMIN_LOGIN_ATTEMPTS.get(ip,[]) if now-x<900]
+                if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
+                ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
+                if not ok:
+                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
+                ADMIN_LOGIN_ATTEMPTS.pop(ip, None); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin"}
+                self.send_response(303); self.send_header("Set-Cookie",f"idontpg_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200"); self.send_header("Location",ADMIN_PATH); self.end_headers(); return
+            if not self.require_csrf(data): self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
+            ui=idont_load_ui_settings(); get=lambda k,d="":data.get(k,d)
+            presets={"ultra-dark":("#050507","#7c3aed","#22d3ee"),"aurora":("#07111b","#8b5cf6","#22d3ee"),"midnight":("#0b0613","#a855f7","#ec4899"),"cyber":("#03090a","#22c55e","#06b6d4"),"ocean":("#041018","#0ea5e9","#2dd4bf"),"ruby":("#100608","#f43f5e","#fb923c")}
+            preset=get("theme_preset","")
+            if preset in presets:
+                bg,a1,a2=presets[preset]; ui["theme"].update({"preset":preset,"primary":a1,"secondary":a2}); ui["background"]["value"]=bg
+            def num(k,d,lo,hi,typ=float):
+                try:return max(lo,min(hi,typ(get(k,d))))
+                except:return d
+            ui["site_name"]=get("site_name",ui["site_name"]).strip()[:80]; ui["theme"]["primary"]=get("primary",ui["theme"]["primary"]).strip()[:24]; ui["theme"]["secondary"]=get("secondary",ui["theme"]["secondary"]).strip()[:24]; ui["background"]["value"]=get("background",ui["background"].get("value","")).strip()[:600]
+            ui["theme"].update({"glass_opacity":num("glass_opacity",.58,.25,.95),"blur":num("blur",18,0,40,int),"radius":num("radius",20,8,36,int),"glow":num("glow",.72,0,1),"animation_speed":num("animation_speed",1,.2,3),"font_size":num("font_size",15,11,22,int)})
+            ui["logo"].update({"url":get("logo_url",ui["logo"].get("url","")).strip()[:600],"width":num("logo_width",54,24,240,int)})
+            ui["texts"].update({"hero_title":get("hero_title",ui["texts"].get("hero_title","کنترل کامل Backup"))[:120],"hero_subtitle":get("hero_subtitle",ui["texts"].get("hero_subtitle",""))[:300],"backup_title":get("backup_title",ui["texts"]["backup_title"])[:120],"traffic_title":get("traffic_title",ui["texts"]["traffic_title"])[:120],"activity_title":get("activity_title",ui["texts"]["activity_title"])[:120]})
+            ui["activity_limit"]=num("activity_limit",3,1,20,int)
+            for k in ui["sections"]: ui["sections"][k]=bool(get("sec_"+k))
+            for k in ui["emojis"]:
+                ui["emojis"][k].update({"icon":get("emoji_"+k,ui["emojis"][k]["icon"])[:8],"color":get("emoji_color_"+k,ui["emojis"][k]["color"])[:24],"glow":num("emoji_glow_"+k,ui["emojis"][k].get("glow",.72),0,1),"speed":num("emoji_speed_"+k,ui["emojis"][k].get("speed",1.35),.3,4)})
+            bn=get("button_name","").strip(); bu=get("button_url","").strip()
+            if bn and bu: ui.setdefault("buttons",[]).append({"name":bn[:60],"icon":get("button_icon","🔗")[:8],"url":bu[:600]}); ui["buttons"]=ui["buttons"][-20:]
+            idont_save_ui_settings(ui); self.send_html(page("Admin",'<div class="glass"><div class="notice ok">تنظیمات روی کل وب‌پنل اعمال شد.</div><a class="btn primary" href="'+ADMIN_PATH+'">بازگشت</a></div>')); return
 
         if not self.logged():
             self.redirect("/login"); return
@@ -1858,28 +1932,6 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
-        if path == ADMIN_PATH:
-            action = data.get("action", "settings")
-            if action == "password":
-                pw = data.get("password", "")
-                confirm = data.get("password_confirm", "")
-                if not valid_password(pw):
-                    self.send_html(page("Admin", '<div class="glass"><div class="notice bad">رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.</div><a class="btn" href="' + ADMIN_PATH + '">تلاش دوباره</a></div>'), 400); return
-                if pw != confirm:
-                    self.send_html(page("Admin", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="' + ADMIN_PATH + '">تلاش دوباره</a></div>'), 400); return
-                salt, digest = hash_password(pw)
-                c.update({"password_salt": salt, "password_hash": digest})
-                save_cfg(c)
-                sid = self.sid()
-                if sid:
-                    SESSIONS[sid]["created"] = time.time()
-                self.send_html(page("Admin", '<div class="glass"><div class="notice ok">رمز ادمین با موفقیت تغییر کرد.</div><div class="actions"><a class="btn primary" href="' + ADMIN_PATH + '">مدیریت ادمین</a><a class="btn" href="/">داشبورد</a></div></div>')); return
-            panel_name = data.get("panel_name", "").strip()
-            if not panel_name:
-                panel_name = APP
-            c["panel_name"] = panel_name[:80]
-            save_cfg(c)
-            self.send_html(page("Admin", '<div class="glass"><div class="notice ok">تنظیمات با موفقیت ذخیره شد.</div><a class="btn" href="' + ADMIN_PATH + '">برگشت</a></div>')); return
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
