@@ -26,18 +26,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.6.5"
+VERSION = "5.6.4"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
-HOST = os.environ.get("IDONT_HOST", "0.0.0.0")
-PORT = int(os.environ.get("IDONT_PORT", "5000"))
-STATE_DIR = Path(os.environ.get("IDONT_STATE_DIR", "/etc/idont-backup"))
+HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
+PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
+STATE_DIR = Path(os.environ.get("IDONTPG_STATE_DIR", "/etc/idontPG-backup"))
 CONFIG = STATE_DIR / "web.json"
 SCRIPT = Path(__file__).resolve()
-LOGO_CANDIDATES = [SCRIPT.parent / "web" / "static" / "logo.png", Path("/usr/local/share/idont-backup/logo.png")]
+LOGO_CANDIDATES = [SCRIPT.parent / "web" / "static" / "logo.png", Path("/usr/local/share/idontPG-backup/logo.png")]
 CORE_CANDIDATES = [
-    Path("/usr/local/bin/idont-backup"),
-    Path("/usr/local/bin/-Backup"),
-    SCRIPT.parent / "_backup.py",
+    Path("/usr/local/bin/idontPG-backup"),
+    Path("/usr/local/bin/PG-Backup"),
+    SCRIPT.parent / "pg_backup.py",
 ]
 SESSIONS = {}
 ADMIN_LOGIN_ATTEMPTS = {}
@@ -59,10 +59,10 @@ def load_core():
             continue
         try:
             if path.suffix == ".py":
-                spec = importlib.util.spec_from_file_location("idont_core", str(path))
+                spec = importlib.util.spec_from_file_location("idontpg_core", str(path))
             else:
-                loader = importlib.machinery.SourceFileLoader("idont_core", str(path))
-                spec = importlib.util.spec_from_loader("idont_core", loader)
+                loader = importlib.machinery.SourceFileLoader("idontpg_core", str(path))
+                spec = importlib.util.spec_from_loader("idontpg_core", loader)
             if spec is None or spec.loader is None:
                 continue
             mod = importlib.util.module_from_spec(spec)
@@ -74,7 +74,7 @@ def load_core():
             last_error = exc
             continue
     detail = f": {last_error}" if 'last_error' in locals() else ""
-    raise RuntimeError(f"idont-backup core could not be loaded{detail}")
+    raise RuntimeError(f"idontPG-backup core could not be loaded{detail}")
 
 
 def load_cfg():
@@ -176,7 +176,7 @@ def telegram_test(c):
         return False, "Bot Token و Chat ID الزامی هستند."
     if topic_raw and not topic:
         return False, "Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید."
-    params = {"chat_id": chat, "text": "✅ idont-backup\nTelegram connection test successful."}
+    params = {"chat_id": chat, "text": "✅ idontPG-backup\nTelegram connection test successful."}
     if topic:
         params["message_thread_id"] = int(topic)
     try:
@@ -296,7 +296,7 @@ def scheduler_status():
 
 
 def _panel_read_env():
-    """Read PasarGuard's .env using the same source path as idontPG."""
+    """Read PasarGuard's .env using the same source path as PGClockMG."""
     env_path = Path("/opt/pasarguard/.env")
     try:
         return env_path.read_text(encoding="utf-8", errors="ignore") if env_path.exists() else ""
@@ -1333,7 +1333,7 @@ def _resource_chart_html():
   function area(values){return path(values)+' L 900 300 L 0 300 Z'}
   function point(values){const v=values[values.length-1],x=900,y=300-(Math.max(0,Math.min(100,v))/100)*300;return [x,y]}
   function render(){['cpu','ram','disk'].forEach(k=>{const vals=history.map(x=>x[k]);document.getElementById(k+'Line').setAttribute('d',path(vals));document.getElementById(k+'Area').setAttribute('d',area(vals));const pt=point(vals),dot=document.getElementById(k+'Dot');dot.setAttribute('cx',pt[0]);dot.setAttribute('cy',pt[1]);});}
-  function setVals(u){['cpu','ram','disk'].forEach(k=>document.getElementById(k+'Value').textContent=Number(u[k]).toFixed(1)+'%');history.push({cpu:Number(u.cpu),ram:Number(u.ram),disk:Number(u.disk)});history.shift();render();const L=(document.documentElement.lang||'en');const locale=L==='fa'?'fa-IR':L==='ru'?'ru-RU':'en-US';const prefix=L==='fa'?'به‌روزرسانی: ':L==='ru'?'Обновлено: ':'Updated: ';document.getElementById('resourceUpdated').textContent=prefix+new Date().toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+  function setVals(u){['cpu','ram','disk'].forEach(k=>document.getElementById(k+'Value').textContent=Number(u[k]).toFixed(1)+'%');history.push({cpu:Number(u.cpu),ram:Number(u.ram),disk:Number(u.disk)});history.shift();render();const lc=document.documentElement.lang==='ru'?'ru-RU':document.documentElement.lang==='en'?'en-US':'fa-IR';const lab=document.documentElement.lang==='ru'?'Обновлено':document.documentElement.lang==='en'?'Updated':'به‌روزرسانی';document.getElementById('resourceUpdated').textContent=lab+': '+new Date().toLocaleTimeString(lc,{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   render();
   async function refresh(){try{const r=await fetch('/api/resources',{cache:'no-store',credentials:'same-origin'});if(!r.ok) throw new Error('status');setVals(await r.json());}catch(e){}}
   setInterval(refresh,3000);
@@ -1416,7 +1416,7 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 .neo-icon.inline-icon{flex-basis:18px;width:18px;height:18px;border:0;background:transparent;box-shadow:none;color:currentColor;border-radius:0}
 .neo-icon.inline-icon svg{width:18px;height:18px;filter:none}
 .neo-icon:hover{transform:translateY(-2px) scale(1.03);box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 0 26px rgba(76,201,240,.14)}
-/* v5.6.5 small meta/inline icons: glow belongs to the SVG, never to the icon box. */
+/* v5.6.4 small meta/inline icons: glow belongs to the SVG, never to the icon box. */
 .neo-icon.meta-icon,.neo-icon.inline-icon{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important;border-radius:0!important;overflow:visible!important}
 .neo-icon.meta-icon:hover,.neo-icon.inline-icon:hover{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important;border-radius:0!important;transform:none!important}
 .neo-icon.meta-icon svg{background:transparent!important;box-shadow:none!important;filter:drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor)!important}
@@ -1424,7 +1424,7 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 body.custom .neo-icon.meta-icon,body.custom .neo-icon.inline-icon{background:transparent!important;border:0!important;border-color:transparent!important;box-shadow:none!important}
 body.custom .neo-icon.meta-icon svg,body.custom .neo-icon.inline-icon svg{background:transparent!important;box-shadow:none!important}
 
-/* v5.6.5: light theme icon polish — keep SVG icons readable and visually matched to the light glass UI. */
+/* v5.6.4: light theme icon polish — keep SVG icons readable and visually matched to the light glass UI. */
 .light .neo-icon{color:#6d28d9;background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(237,233,254,.72) 58%,rgba(252,231,243,.68));border-color:rgba(109,40,217,.20);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 8px 24px rgba(109,40,217,.12),0 0 18px rgba(236,72,153,.08)}
 .light .neo-icon:before{background:radial-gradient(circle,rgba(255,255,255,.72),transparent 68%)}
 .light .neo-icon svg{filter:drop-shadow(0 1px 2px rgba(109,40,217,.16))}
@@ -1457,8 +1457,8 @@ body.custom .neo-icon.meta-icon svg,body.custom .neo-icon.inline-icon svg{backgr
 body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.86),rgba(252,236,255,.78));box-shadow:0 28px 90px rgba(124,58,237,.22),0 0 60px rgba(236,72,153,.10)}body.light .drawer-link{color:#17131f;background:rgba(255,255,255,.46)}body.light .drawer-link:hover{background:rgba(255,255,255,.72)}body.light .drawer-head h3,body.light .drawer-link strong{color:#17131f}body.light .drawer-close,body.light .menu-toggle{color:#17131f;background:rgba(255,255,255,.58)}body.light .drawer-section,body.light .drawer-head p,body.light .drawer-link small{color:#4b3f52}body.light .drawer-backdrop{background:rgba(70,25,75,.20)}
 @media(max-width:800px){.hero{margin-top:8px;margin-bottom:18px}.hero h2{font-size:clamp(25px,8vw,34px);line-height:1.25;letter-spacing:-.8px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}.hero p{font-size:12px;line-height:1.8}.top-actions{gap:7px}}
 
-/* v5.6.5 visual polish: consistent light surfaces, language selector and cleaner telemetry */
-.language-picker{position:relative}.language-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.language-toggle{display:grid;place-items:center;position:relative;z-index:2}.language-svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 6px currentColor);transition:transform .25s ease,filter .25s ease}.language-toggle:hover .language-svg{transform:rotate(12deg) scale(1.08);filter:drop-shadow(0 0 9px currentColor) drop-shadow(0 0 16px var(--accent2))}.language-toggle:active .language-svg{transform:scale(.94)}.lang-code{display:inline-grid;place-items:center;min-width:29px;height:24px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:9px;font-weight:900;letter-spacing:.6px;box-shadow:0 0 14px color-mix(in srgb,var(--accent2) 35%,transparent)}.language-toggle:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.45);box-shadow:0 10px 30px rgba(34,211,238,.14)}.language-svg{overflow:visible}.language-svg circle{vector-effect:non-scaling-stroke}.language-svg .lang-spark{stroke-width:1.35;opacity:.92}.language-toggle::before{content:"";position:absolute;width:20px;height:20px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.22),transparent 70%);filter:blur(5px);opacity:.9;pointer-events:none}.language-toggle:hover::before{transform:scale(1.25);opacity:1}.language-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--accent2) 80%,white);outline-offset:3px}.language-menu{position:absolute;top:50px;right:0;z-index:131;min-width:155px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(12,14,24,.94);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%;display:flex;align-items:center;gap:9px;padding:10px 11px;border:0;border-radius:11px;background:transparent;color:var(--text);cursor:pointer;font:inherit;text-align:right}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.12)}body.light .language-menu{background:rgba(255,255,255,.96);border-color:rgba(124,58,237,.18);box-shadow:0 18px 50px rgba(124,58,237,.18)}body.light .language-menu button{color:#26162d}body.light .language-menu button:hover,body.light .language-menu button.active{background:rgba(124,58,237,.08)}
+/* v5.6.4 visual polish: consistent light surfaces, language selector and cleaner telemetry */
+.language-picker{position:relative}.language-toggle{min-width:46px;width:46px;height:42px;padding:0;border:1px solid var(--line);border-radius:14px;color:var(--text);background:var(--glass2);backdrop-filter:blur(18px);cursor:pointer;font-size:18px;transition:.25s ease}.language-toggle:hover{transform:translateY(-2px);border-color:rgba(34,211,238,.45);box-shadow:0 10px 30px rgba(34,211,238,.14)}.language-menu{position:absolute;top:50px;right:0;z-index:131;min-width:155px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(12,14,24,.94);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu[hidden]{display:none}.language-menu button{width:100%;display:flex;align-items:center;gap:9px;padding:10px 11px;border:0;border-radius:11px;background:transparent;color:var(--text);cursor:pointer;font:inherit;text-align:right}.language-menu button:hover,.language-menu button.active{background:rgba(124,58,237,.12)}body.light .language-menu{background:rgba(255,255,255,.96);border-color:rgba(124,58,237,.18);box-shadow:0 18px 50px rgba(124,58,237,.18)}body.light .language-menu button{color:#26162d}body.light .language-menu button:hover,body.light .language-menu button.active{background:rgba(124,58,237,.08)} .language-svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px color-mix(in srgb,var(--accent2) 70%,transparent));transition:transform .25s ease,filter .25s ease}.language-toggle:hover .language-svg{transform:rotate(10deg) scale(1.08);filter:drop-shadow(0 0 4px currentColor) drop-shadow(0 0 12px color-mix(in srgb,var(--accent2) 85%,transparent))}.lang-mini{display:inline-grid;place-items:center;min-width:28px;height:22px;padding:0 5px;border-radius:8px;font-size:9px;font-weight:900;letter-spacing:.5px;background:rgba(34,211,238,.10);border:1px solid rgba(34,211,238,.20);color:var(--accent2);box-shadow:0 0 12px rgba(34,211,238,.10)}
 body.light{color-scheme:light}body.light .glass{background:linear-gradient(145deg,rgba(255,255,255,.90),rgba(250,243,255,.78))!important;border-color:rgba(124,58,237,.16)!important;box-shadow:0 18px 55px rgba(77,37,102,.10),inset 0 1px 0 rgba(255,255,255,.90)}body.light .card:hover{box-shadow:0 22px 65px rgba(77,37,102,.13),inset 0 1px 0 rgba(255,255,255,.95)}body.light .meta-row,body.light .resource-stat,body.light .chart-bar,body.light .theme-toggle,body.light .menu-toggle{background:rgba(255,255,255,.68)!important;border-color:rgba(124,58,237,.14)!important;color:#26162d}body.light .resource-stat{box-shadow:0 8px 24px rgba(77,37,102,.07),inset 0 1px 0 rgba(255,255,255,.95)}body.light .resource-plot{background:linear-gradient(145deg,rgba(255,255,255,.84),rgba(246,238,255,.72))!important;border-color:rgba(124,58,237,.15)!important;box-shadow:0 14px 42px rgba(77,37,102,.08),inset 0 1px 0 rgba(255,255,255,.92)}body.light .resource-stat:after{opacity:.12}body.light .grid-lines line{stroke:#6b5875;stroke-opacity:.10}body.light .resource-stat small,body.light .resource-stat strong,body.light .plot-head b{color:#26162d}body.light .plot-kicker{color:#7c3aed}body.light .y-axis,body.light .legend,body.light .updated,body.light .resource-stat small{color:#735c78}body.light .chart-bar{box-shadow:inset 0 0 0 1px rgba(124,58,237,.08)}body.light .field input,body.light .field select,body.light textarea{background:rgba(255,255,255,.82)!important;color:#26162d!important;border-color:rgba(124,58,237,.16)!important}body.light .btn:not(.primary){background:rgba(255,255,255,.74);color:#3d2450;border-color:rgba(124,58,237,.16)}body.light .sub,body.light .empty,body.light .hint,body.light .brand p,body.light .footer{color:#735c78}body.light .brand h1,body.light .title{color:#26162d}body.light .gradient{background:linear-gradient(90deg,#5b21b6,#7c3aed,#db2777);-webkit-background-clip:text;background-clip:text;color:transparent}
 body.light .card-icon,body.light .hero-icon{filter:none}body.light .neo-icon{background:transparent!important;border-color:transparent!important;box-shadow:none!important}body.light .neo-icon svg{filter:drop-shadow(0 0 7px currentColor)}
 body.light .drawer{background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(248,240,255,.92))!important;border-color:rgba(124,58,237,.16)!important}.lang-en .hero{text-align:left}.lang-en .card-head,.lang-en .plot-head,.lang-en .topbar{direction:ltr}.lang-en .meta-row,.lang-en .resource-stat{direction:ltr}.lang-ru .hero{text-align:left}.lang-ru .card-head,.lang-ru .plot-head,.lang-ru .topbar{direction:ltr}.lang-ru .meta-row,.lang-ru .resource-stat{direction:ltr}html[dir="ltr"] .language-menu,html[dir="ltr"] .theme-menu{right:auto;left:0}html[dir="ltr"] .updated{margin-left:auto;margin-right:0}html[dir="ltr"] .drawer{left:auto;right:0}html[dir="ltr"] .plot-body{padding-left:38px;padding-right:0}html[dir="ltr"] .y-axis{left:0;right:auto;align-items:flex-end}
@@ -1497,16 +1497,15 @@ body.custom .meta-row,body.custom .resource-stat,body.custom .chart-bar,body.cus
 
 
 def ui_language_menu():
-    return """<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="Change language" title="Language"><svg class="language-svg" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="10.8"></circle><path d="M5.3 16h21.4M16 5.2c3 3.05 4.45 6.65 4.45 10.8S19 23.75 16 26.8C13 23.75 11.55 20.15 11.55 16S13 8.25 16 5.2ZM7.5 10.5h17M7.5 21.5h17"></path><path class="lang-spark" d="M25.7 4.5v4M23.7 6.5h4M27.5 12.5v2.8M26.1 13.9h2.8"></path></svg></button><div class="language-menu" id="languageMenu" hidden><button type="button" data-lang-choice="fa"><span class="lang-code">FA</span><span>فارسی</span></button><button type="button" data-lang-choice="en"><span class="lang-code">EN</span><span>English</span></button><button type="button" data-lang-choice="ru"><span class="lang-code">RU</span><span>Русский</span></button></div></div>"""
+    return """<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="تغییر زبان" title="زبان"><svg class="language-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.7"/><path d="M3.5 12h17M12 3.3c2.35 2.45 3.55 5.35 3.55 8.7S14.35 18.25 12 20.7M12 3.3C9.65 5.75 8.45 8.65 8.45 12S9.65 18.25 12 20.7"/><path d="M5.4 7.4h13.2M5.4 16.6h13.2"/></svg></button><div class="language-menu" id="languageMenu" hidden><button type="button" data-lang-choice="fa"><span class="lang-mini">FA</span><span>فارسی</span></button><button type="button" data-lang-choice="en"><span class="lang-mini">EN</span><span>English</span></button><button type="button" data-lang-choice="ru"><span class="lang-mini">RU</span><span>Русский</span></button></div></div>"""
 
 
 def ui_language_script():
     # Client-side localization keeps the backend/API unchanged and makes the
     # three-language switch instant. Custom/admin-entered text is left alone.
     return r"""(function(){
-const LANG_KEY="idontpg-lang-v2";
+const LANG_KEY="idontpg-lang";
 const maps={
- fa:{},
  en:{
   "داشبورد":"Dashboard","نمای کلی سیستم":"System overview","بکاپ تلگرام":"Telegram Backup","تنظیمات و ارسال":"Settings & delivery","تنظیمات بکاپ":"Backup Settings","Scheduler و Backup":"Scheduler & Backup","تست تلگرام":"Telegram Test","بررسی اتصال":"Connection check","حساب کاربری":"Account","مدیریت ورود":"Login management","خروج":"Logout","پایان نشست":"End session","منوی اصلی":"Main menu",
   "مدیریت Backupها":"Manage Backups","Backupهای موجود را مشاهده، دانلود یا حذف کنید.":"View, download or delete available backups.","هنوز Backupای پیدا نشد.":"No backups found.","اطلاعات Backup":"Backup Information","تعداد Backup":"Backup count","حجم کل Backupها":"Total backup size","آخرین Backup":"Latest backup","هنوز Backup ساخته نشده":"No backup created yet","قابل دریافت نیست":"Unavailable",
@@ -1529,103 +1528,95 @@ const maps={
   "پیام تست با موفقیت ارسال شد.":"Тестовое сообщение отправлено.","ارسال پیام تست ناموفق بود.":"Не удалось отправить тестовое сообщение.","Scheduler ذخیره و شروع شد.":"Планировщик сохранён и запущен.","Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد.":"Планировщик сохранён, но запуск завершился ошибкой.","تنظیمات عمومی ذخیره شد.":"Общие настройки сохранены.","تنظیمات Telegram با موفقیت ذخیره شد.":"Настройки Telegram сохранены.","تنظیمات حساب با موفقیت ذخیره شد.":"Настройки аккаунта сохранены.","تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.":"Настройки сохранены и применены ко всей панели.","آنلاین":"Онлайн","آفلاین":"Офлайн","قابل دریافت نیست":"Недоступно","بدون Proxy":"Без прокси","نامعتبر":"Недействительно"
  }
 };
-// v5.6.5: complete the UI vocabulary used by the server-rendered pages and
-// runtime notices. Dynamic values remain intact; only the surrounding labels are translated.
-Object.assign(maps.en,{
- "کنترل کامل Backup":"Backup Control Center","همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.":"Everything for backup management, Telegram delivery and automatic scheduling in one fast glass panel.",
- "اطلاعات بکاپ":"Backup Information","Backup دستی":"Manual Backup","زمان باقی‌مانده":"Time Remaining","وضعیت Scheduler":"Scheduler Status","وضعیت سرویس‌ها":"Service Status","غیرفعال":"Inactive","هشدار":"Warning","اطلاعات":"Information",
- "Backup پیدا نشد.":"Backup not found.","خواندن Backup ناموفق بود.":"Failed to read backup.","حذف Backup ناموفق بود: ":"Failed to delete backup: ","Backup حذف شد: ":"Backup deleted: ",
- "Backup با موفقیت ساخته و ارسال شد.":"Backup created and sent successfully.","Backup دستی ساخته شد":"Manual backup created","Backup ساخته شد ولی ارسال Telegram ناموفق بود":"Backup created, but Telegram delivery failed","Backup ساخته شد: ":"Backup created: ","Backup ناموفق بود":"Backup failed","Backup ناموفق بود.":"Backup failed.","Backup و ارسال به Telegram موفق بود":"Backup and Telegram delivery succeeded",
- "ارسال قسمت ":"Failed to send part ","تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":"Too many attempts; try again in 15 minutes.","نام کاربری یا رمز ادمین اشتباه است.":"Invalid admin username or password.","نام کاربری یا رمز عبور اشتباه است.":"Invalid username or password.","درخواست نامعتبر است.":"Invalid request.","درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":"Invalid or expired request. Reload the page.",
- "فایل Backup ساخته نشد.":"Backup file was not created.","تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.":"Large-file splitting for Telegram is unavailable in the backup core.",
- "توکن BotFather را وارد کنید.":"Enter the BotFather token.","شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.":"Enter the Topic number; a Telegram Topic link is also accepted.","Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.":"Invalid Topic ID. Enter a numeric message_thread_id or a Telegram Topic link.",
- "اختیاری. اگر Proxy ندارید خالی بگذارید.":"Optional. Leave empty if you do not use a proxy.","با Chat ID و Topic فعلی ارسال می‌شود.":"Sent using the current Chat ID and Topic.","قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.":"Check the connection before enabling the scheduler.",
- "تنظیمات Backup ذخیره شد.":"Backup settings saved.","تنظیمات Telegram با موفقیت ذخیره شد.":"Telegram settings saved successfully.","تنظیمات عمومی ذخیره شد.":"General settings saved.","تنظیمات حساب با موفقیت ذخیره شد.":"Account settings saved successfully.","تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.":"Settings saved and applied across the entire web panel.","ذخیره تنظیمات ناموفق بود: ":"Failed to save settings: ",
- "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد.":"Scheduler saved, but starting it failed.","Scheduler ذخیره و شروع شد.":"Scheduler saved and started.","Scheduler متوقف شد":"Scheduler stopped",
- "هنوز فعالیتی ثبت نشده.":"No activity recorded yet.","باز کردن منو":"Open menu","بستن منو":"Close menu","انتخاب تم":"Choose theme","تغییر زبان":"Change language","منو":"Menu",
- "پس‌زمینه":"Background","شفافیت Glass":"Glass opacity","گردی کارت":"Card radius","شدت سایه کارت":"Card shadow strength","اندازه فونت":"Font size","نمایش بخش‌ها":"Visible sections","تعداد فعالیت‌ها":"Activity count","عنوان کوچک زیر برند":"Brand subtitle","عرض Logo":"Logo width","سرعت انیمیشن":"Animation speed",
- "وضعیت":"Status","آیکون":"Icon","رنگ":"Color","Glow":"Glow","سرعت":"Speed","آزاد":"Free","استفاده‌شده":"Used","بازه":"Interval","دکمه":"Button",
- "نمودار لحظه‌ای منابع سرور":"Live Server Resource Chart","پیام تست با موفقیت ارسال شد.":"Test message sent successfully.","ارسال پیام تست ناموفق بود.":"Test message failed.","تست اتصال":"Connection Test","تست":"Test","ارسال پیام تست":"Send Test Message","ذخیره تنظیمات":"Save Settings","ذخیره همه تغییرات":"Save All Changes",
- "ورود امن ←":"Secure Login ←","ساخت حساب و ورود":"Create Account & Login","ساخت رمز و ورود":"Create Password & Login","راه‌اندازی اولیه قبلاً انجام شده است.":"Initial setup has already been completed.","رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.":"Password must be at least 8 characters, include at least 2 letters, 1 number, and one of # @ *.","رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.":"The new password must be at least 8 characters, include letters, an uppercase letter, a number, and a special character.","تکرار رمز جدید با رمز عبور یکسان نیست.":"New password confirmation does not match.","تکرار رمز عبور با رمز جدید یکسان نیست.":"Password confirmation does not match.",
- "برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.":"To protect the panel, create a username of 5–32 characters and a password of at least 8 characters with at least 2 letters, 1 number and one of # @ *.","برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.":"Enter at least 8 characters to change the password. Leave this field empty if you do not want to change it.",
- "نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.":"Username must be 5–32 characters and contain only English letters, numbers or hyphens.","فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.":"English letters, numbers and hyphens only; 5–32 characters.",
- "صفحه پیدا نشد.":"Page not found.","تلاش دوباره":"Try Again","بازگشت":"Back","برگشت":"Back","برگشت به Telegram":"Back to Telegram","بازگشت به مدیریت":"Back to Admin","← برگشت":"← Back","← داشبورد":"← Dashboard","← برگشت":"← Back",
- "همین الان":"Just now","دقیقه پیش":"minutes ago","ساعت پیش":"hours ago","روز پیش":"days ago","روز":"days","ساعت":"hours","دقیقه":"minutes",
- "مصرف واقعی Node":"Real Node Usage","قابل دریافت نیست":"Unavailable","تنظیم نشده":"Not configured","تنظیم شده":"Configured","در حال اجرا":"Running","فعال":"Active","متوقف":"Stopped","آنلاین":"Online","آفلاین":"Offline","بدون Proxy":"No Proxy","نامعتبر":"Invalid"
-});
-Object.assign(maps.ru,{
- "کنترل کامل Backup":"Центр управления бэкапами","همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.":"Всё для управления бэкапами, отправки в Telegram и автоматического планирования в быстрой стеклянной панели.",
- "اطلاعات بکاپ":"Информация о бэкапе","Backup دستی":"Ручной бэкап","زمان باقی‌مانده":"Оставшееся время","وضعیت Scheduler":"Статус планировщика","وضعیت سرویس‌ها":"Состояние сервисов","غیرفعال":"Неактивно","هشدار":"Предупреждение","اطلاعات":"Информация",
- "Backup پیدا نشد.":"Бэкап не найден.","خواندن Backup ناموفق بود.":"Не удалось прочитать бэкап.","حذف Backup ناموفق بود: ":"Не удалось удалить бэкап: ","Backup حذف شد: ":"Бэкап удалён: ",
- "Backup با موفقیت ساخته و ارسال شد.":"Бэкап успешно создан и отправлен.","Backup دستی ساخته شد":"Ручной бэкап создан","Backup ساخته شد ولی ارسال Telegram ناموفق بود":"Бэкап создан, но отправка в Telegram не удалась","Backup ساخته شد: ":"Бэкап создан: ","Backup ناموفق بود":"Ошибка бэкапа","Backup ناموفق بود.":"Ошибка бэкапа","Backup و ارسال به Telegram موفق بود":"Бэкап и отправка в Telegram выполнены успешно",
- "ارسال قسمت ":"Не удалось отправить часть ","تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":"Слишком много попыток; повторите через 15 минут.","نام کاربری یا رمز ادمین اشتباه است.":"Неверное имя пользователя или пароль администратора.","نام کاربری یا رمز عبور اشتباه است.":"Неверное имя пользователя или пароль.","درخواست نامعتبر است.":"Недействительный запрос.","درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":"Недействительный или истёкший запрос. Перезагрузите страницу.",
- "فایل Backup ساخته نشد.":"Файл бэкапа не создан.","تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.":"Разделение больших файлов для Telegram недоступно в ядре бэкапа.",
- "توکن BotFather را وارد کنید.":"Введите токен BotFather.","شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.":"Введите номер Topic; также принимается ссылка на Topic Telegram.","Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.":"Недействительный Topic ID. Введите числовой message_thread_id или ссылку на Topic Telegram.",
- "اختیاری. اگر Proxy ندارید خالی بگذارید.":"Необязательно. Оставьте пустым, если прокси не используется.","با Chat ID و Topic فعلی ارسال می‌شود.":"Отправляется с текущими Chat ID и Topic.","قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.":"Проверьте подключение перед включением планировщика.",
- "تنظیمات Backup ذخیره شد.":"Настройки бэкапа сохранены.","تنظیمات Telegram با موفقیت ذخیره شد.":"Настройки Telegram сохранены.","تنظیمات عمومی ذخیره شد.":"Общие настройки сохранены.","تنظیمات حساب با موفقیت ذخیره شد.":"Настройки аккаунта сохранены.","تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.":"Настройки сохранены и применены ко всей веб-панели.","ذخیره تنظیمات ناموفق بود: ":"Не удалось сохранить настройки: ",
- "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد.":"Планировщик сохранён, но запуск завершился ошибкой.","Scheduler ذخیره و شروع شد.":"Планировщик сохранён и запущен.","Scheduler متوقف شد":"Планировщик остановлен",
- "هنوز فعالیتی ثبت نشده.":"Действий пока нет.","باز کردن منو":"Открыть меню","بستن منو":"Закрыть меню","انتخاب تم":"Выбор темы","تغییر زبان":"Сменить язык","منو":"Меню",
- "پس‌زمینه":"Фон","شفافیت Glass":"Прозрачность Glass","گردی کارت":"Скругление карточек","شدت سایه کارت":"Интенсивность тени","اندازه فونت":"Размер шрифта","نمایش بخش‌ها":"Видимые разделы","تعداد فعالیت‌ها":"Количество действий","عنوان کوچک زیر برند":"Подзаголовок бренда","عرض Logo":"Ширина логотипа","سرعت انیمیشن":"Скорость анимации",
- "وضعیت":"Статус","آیکون":"Иконка","رنگ":"Цвет","Glow":"Свечение","سرعت":"Скорость","آزاد":"Свободно","استفاده‌شده":"Использовано","بازه":"Интервал","دکمه":"Кнопка",
- "نمودار لحظه‌ای منابع سرور":"График ресурсов сервера в реальном времени","پیام تست با موفقیت ارسال شد.":"Тестовое сообщение успешно отправлено.","ارسال پیام تست ناموفق بود.":"Не удалось отправить тестовое сообщение.","تست اتصال":"Проверка подключения","تست":"Тест","ارسال پیام تست":"Отправить тест","ذخیره تنظیمات":"Сохранить настройки","ذخیره همه تغییرات":"Сохранить все изменения",
- "ورود امن ←":"Безопасный вход ←","ساخت حساب و ورود":"Создать аккаунт и войти","ساخت رمز و ورود":"Создать пароль и войти","راه‌اندازی اولیه قبلاً انجام شده است.":"Первичная настройка уже выполнена.","رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.":"Пароль должен содержать минимум 8 символов, 2 буквы, 1 цифру и один из # @ *.","رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.":"Новый пароль должен содержать минимум 8 символов, буквы, заглавную букву, цифру и спецсимвол.","تکرار رمز جدید با رمز عبور یکسان نیست.":"Подтверждение нового пароля не совпадает.","تکرار رمز عبور با رمز جدید یکسان نیست.":"Подтверждение пароля не совпадает.",
- "صفحه پیدا نشد.":"Страница не найдена.","تلاش دوباره":"Повторить","بازگشت":"Назад","برگشت":"Назад","برگشت به Telegram":"Назад в Telegram","بازگشت به مدیریت":"Назад в администрирование","← برگشت":"← Назад","← داشبورد":"← Панель","مصرف واقعی Node":"Реальный трафик Node","قابل دریافت نیست":"Недоступно","تنظیم نشده":"Не настроено","تنظیم شده":"Настроено","در حال اجرا":"Работает","فعال":"Активно","متوقف":"Остановлено","آنلاین":"Онлайн","آفلاین":"Офлайн","بدون Proxy":"Без прокси","نامعتبر":"Недействительно"
-});
-// Build a reverse Persian dictionary so switching from English/Russian back to Persian works too.
-Object.keys(maps.en).forEach(function(k){var v=maps.en[k];if(v&&v!==k&&!Object.prototype.hasOwnProperty.call(maps.fa,v))maps.fa[v]=k;});
-Object.keys(maps.ru).forEach(function(k){var v=maps.ru[k];if(v&&v!==k&&!Object.prototype.hasOwnProperty.call(maps.fa,v))maps.fa[v]=k;});
-function translateValue(text, dict){
-  const raw=String(text||"");
-  if(Object.prototype.hasOwnProperty.call(dict,raw)) return dict[raw];
-  let out=raw;
-  Object.keys(dict).sort((a,b)=>b.length-a.length).forEach(k=>{
-    if(k.length>1 && out.includes(k)) out=out.split(k).join(dict[k]);
-  });
-  return out;
-}
-function translateElement(el, dict){
-  if(!el || el.nodeType!==1) return;
-  if(el.matches("script,style,svg,path,circle,defs,linearGradient,stop,filter,feGaussianBlur,feMerge,feMergeNode")) return;
-  ["title","aria-label","placeholder","alt"].forEach(function(attr){
-    if(el.hasAttribute(attr)){
-      const key="i18nOriginal_"+attr;
-      if(!el.dataset[key]) el.dataset[key]=el.getAttribute(attr);
-      el.setAttribute(attr,translateValue(el.dataset[key],dict));
-    }
-  });
-  el.childNodes.forEach(node=>{
-    if(node.nodeType===3){
-      if(!node.__i18nOriginal) node.__i18nOriginal=node.nodeValue;
-      node.nodeValue=translateValue(node.__i18nOriginal,dict);
-    }
-  });
-}
-let applying=false;
+
+const extra={
+ en:{
+  "کنترل کامل Backup":"Complete Backup Control","اطلاعات پنل":"Panel Information","اطلاعات بکاپ":"Backup Information","وضعیت Scheduler":"Scheduler Status","بازه":"Interval","استفاده‌شده":"Used","آزاد":"Free","زمان باقی‌مانده":"Time remaining","فعالیت‌ها":"Activities","فعالیت":"Activity","توضیح داشبورد":"Dashboard description","عنوان مصرف":"Traffic title","عنوان Backup":"Backup title","عنوان فعالیت":"Activity title","اندازه فونت":"Font size","گردی کارت":"Card radius","پس‌زمینه":"Background","شفافیت Glass":"Glass opacity","شدت سایه کارت":"Card shadow strength","فعالیت‌های اخیر":"Recent Activity","تعداد فعالیت‌ها":"Activity count","دکمه‌ها":"Buttons","لینک سفارشی":"Custom link","آیکون":"Icon","نام کاربری":"Username","نام کاربری ادمین":"Admin username","رمز ادمین":"Admin password","رمز عبور":"Password","رمز عبور جدید":"New password","تکرار رمز عبور":"Confirm password","تکرار رمز جدید":"Confirm new password","فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.":"English letters, numbers and hyphens only; 5–32 characters.","برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.":"Enter at least 8 characters to change the password. Leave this blank if you do not want to change it.","توکن BotFather را وارد کنید.":"Enter your BotFather token.","شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.":"Enter the Topic number; a Telegram Topic link is also accepted.","اختیاری. اگر Proxy ندارید خالی بگذارید.":"Optional. Leave blank if you do not use a proxy.","با Chat ID و Topic فعلی ارسال می‌شود.":"Sent using the current Chat ID and Topic.","همین حالا یک Backup کامل بگیرید.":"Create a full backup now.","همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.":"Create a full backup now and send it to the current Telegram destination.","Backup دستی ساخته شد":"Manual backup created","Backup پیدا نشد.":"Backup not found.","خواندن Backup ناموفق بود.":"Failed to read backup.","فایل Backup ساخته نشد.":"Backup file was not created.","Backup ناموفق بود.":"Backup failed.","Backup ساخته شد: ":"Backup created: ","Backup ساخته شد ولی ارسال Telegram ناموفق بود":"Backup created, but Telegram delivery failed","Backup و ارسال به Telegram موفق بود":"Backup and Telegram delivery succeeded","Backup در ":"Backup split into "," قسمت ارسال شد.":" parts and sent.","ارسال قسمت ":"Failed to send part "," ناموفق بود: ":": ","Bot Token و Chat ID الزامی هستند.":"Bot Token and Chat ID are required.","Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.":"Invalid Topic ID. Enter only the message_thread_id number or a Telegram Topic link.","تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.":"Large-file splitting for Telegram is unavailable in the backup core.","راه‌اندازی اولیه قبلاً انجام شده است.":"Initial setup has already been completed.","تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":"Too many attempts; try again in 15 minutes.","نام کاربری یا رمز ادمین اشتباه است.":"Incorrect admin username or password.","درخواست نامعتبر است.":"Invalid request.","ذخیره تنظیمات ناموفق بود: ":"Failed to save settings: ","درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":"Invalid or expired request. Reload the page and try again.","تکرار رمز جدید با رمز عبور یکسان نیست.":"New password confirmation does not match.","تکرار رمز عبور با رمز جدید یکسان نیست.":"Password confirmation does not match the new password.","نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.":"Username must be 5–32 characters and contain only English letters, numbers or hyphens.","رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.":"New password must be at least 8 characters and include English letters, an uppercase letter, a number and a special character.","رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.":"Password must be at least 8 characters, include at least 2 letters, 1 number and one of # @ *.","تکرار رمز عبور با رمز جدید یکسان نیست.":"Password confirmation does not match.","برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.":"For panel security, create a username of 5–32 characters and a password of at least 8 characters with 2 letters, 1 number and one of # @ *.","ساخت حساب و ورود":"Create account & login","ورود به مدیریت":"Enter administration","ذخیره همه تغییرات":"Save all changes","پنل مدیریت":"Admin panel","توضیح":"Description","فعالیت ثبت نشده":"No activity recorded","هنوز فعالیتی ثبت نشده.":"No activity recorded yet.","صفحه پیدا نشد.":"Page not found.","برگشت":"Back","برگشت به Telegram":"Back to Telegram","داشبورد":"Dashboard","منو":"Menu","باز کردن منو":"Open menu","بستن منو":"Close menu","انتخاب تم":"Choose theme","انتخاب زبان":"Choose language","زبان":"Language"
+ },
+ ru:{
+  "کنترل کامل Backup":"Полное управление бэкапами","اطلاعات پنل":"Информация о панели","اطلاعات بکاپ":"Информация о бэкапе","وضعیت Scheduler":"Статус планировщика","بازه":"Интервал","استفاده‌شده":"Использовано","آزاد":"Свободно","زمان باقی‌مانده":"Оставшееся время","فعالیت‌ها":"Действия","فعالیت":"Действие","توضیح داشبورد":"Описание панели","عنوان مصرف":"Заголовок трафика","عنوان Backup":"Заголовок бэкапа","عنوان فعالیت":"Заголовок действий","اندازه فونت":"Размер шрифта","گردی کارت":"Скругление карточек","پس‌زمینه":"Фон","شفافیت Glass":"Прозрачность Glass","شدت سایه کارت":"Интенсивность тени карточек","تعداد فعالیت‌ها":"Количество действий","دکمه‌ها":"Кнопки","لینک سفارشی":"Пользовательская ссылка","نام کاربری":"Имя пользователя","نام کاربری ادمین":"Имя администратора","رمز ادمین":"Пароль администратора","رمز عبور":"Пароль","رمز عبور جدید":"Новый пароль","تکرار رمز عبور":"Повтор пароля","تکرار رمز جدید":"Повтор нового пароля","فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.":"Только английские буквы, цифры и дефисы; 5–32 символа.","توکن BotFather را وارد کنید.":"Введите токен BotFather.","شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.":"Введите номер Topic; ссылка Telegram Topic также принимается.","اختیاری. اگر Proxy ندارید خالی بگذارید.":"Необязательно. Оставьте пустым без прокси.","با Chat ID و Topic فعلی ارسال می‌شود.":"Отправляется с текущими Chat ID и Topic.","همین حالا یک Backup کامل بگیرید.":"Создать полный бэкап сейчас.","همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.":"Создайте полный бэкап и отправьте его в текущий Telegram.","Backup دستی ساخته شد":"Ручной бэкап создан","Backup پیدا نشد.":"Бэкап не найден.","خواندن Backup ناموفق بود.":"Не удалось прочитать бэкап.","فایل Backup ساخته نشد.":"Файл бэкапа не создан.","Backup ناموفق بود.":"Бэкап не выполнен.","Backup ساخته شد: ":"Бэкап создан: ","Backup ساخته شد ولی ارسال Telegram ناموفق بود":"Бэкап создан, но отправка в Telegram не удалась","Backup و ارسال به Telegram موفق بود":"Бэкап и отправка в Telegram выполнены успешно","Backup در ":"Бэкап разделён на "," قسمت ارسال شد.":" частей и отправлен.","ارسال قسمت ":"Не удалось отправить часть "," ناموفق بود: ":": ","Bot Token و Chat ID الزامی هستند.":"Bot Token и Chat ID обязательны.","Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.":"Недействительный Topic ID. Введите число message_thread_id или ссылку Telegram Topic.","تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.":"Разбиение больших файлов для Telegram недоступно в ядре бэкапа.","راه‌اندازی اولیه قبلاً انجام شده است.":"Первичная настройка уже выполнена.","تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.":"Слишком много попыток; повторите через 15 минут.","نام کاربری یا رمز ادمین اشتباه است.":"Неверное имя пользователя или пароль администратора.","درخواست نامعتبر است.":"Недействительный запрос.","ذخیره تنظیمات ناموفق بود: ":"Не удалось сохранить настройки: ","درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.":"Недействительный или просроченный запрос. Перезагрузите страницу.","تکرار رمز جدید با رمز عبور یکسان نیست.":"Подтверждение нового пароля не совпадает.","تکرار رمز عبور با رمز جدید یکسان نیست.":"Подтверждение пароля не совпадает.","نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.":"Имя пользователя должно содержать 5–32 символа: только латинские буквы, цифры и дефисы.","رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.":"Новый пароль должен содержать минимум 8 символов, латинские буквы, заглавную букву, цифру и специальный символ.","رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.":"Пароль должен содержать минимум 8 символов, 2 буквы, 1 цифру и один из # @ *.","ساخت حساب و ورود":"Создать аккаунт и войти","ورود به مدیریت":"Войти в администрирование","ذخیره همه تغییرات":"Сохранить все изменения","توضیح":"Описание","هنوز فعالیتی ثبت نشده.":"Действий пока нет.","صفحه پیدا نشد.":"Страница не найдена.","برگشت":"Назад","برگشت به Telegram":"Назад к Telegram","داشبورد":"Панель","منو":"Меню","باز کردن منو":"Открыть меню","بستن منو":"Закрыть меню","انتخاب تم":"Выбрать тему","انتخاب زبان":"Выбрать язык","زبان":"Язык"
+ }
+};
+Object.assign(maps.en,extra.en); Object.assign(maps.ru,extra.ru);
+
 function setLanguage(lang){
-  if(!maps[lang]) lang="en";
+  if(!maps[lang]) lang="fa";
   const root=document.documentElement, body=document.body;
   root.lang=lang; root.dir=lang==="fa"?"rtl":"ltr";
   body.classList.toggle("lang-en",lang==="en"); body.classList.toggle("lang-ru",lang==="ru"); body.classList.toggle("lang-fa",lang==="fa");
   document.querySelectorAll("[data-lang-choice]").forEach(x=>x.classList.toggle("active",x.dataset.langChoice===lang));
   const menu=document.getElementById("languageMenu"); if(menu) menu.hidden=true;
-  const btn=document.getElementById("languageToggle"); if(btn){btn.title=lang==="fa"?"تغییر زبان":lang==="ru"?"Сменить язык":"Change language";btn.setAttribute("aria-label",btn.title);}
-  const tb=document.getElementById("themeToggle"); if(tb){tb.title=lang==="fa"?"انتخاب تم":lang==="ru"?"Выбор темы":"Choose theme";tb.setAttribute("aria-label",tb.title);}
-  const mb=document.getElementById("menuToggle"); if(mb){mb.title=lang==="fa"?"منو":lang==="ru"?"Меню":"Menu";mb.setAttribute("aria-label",mb.title);}
-  const dict=maps[lang];
-  document.title=lang==="fa"?"idontPG-backup — پنل مدیریت":lang==="ru"?"idontPG-backup — Панель управления":"idontPG-backup — Control Panel";
-  applying=true;
-  document.querySelectorAll("body *").forEach(el=>translateElement(el,dict));
-  applying=false;
+  const btn=document.getElementById("languageToggle"); if(btn) btn.title=lang==="fa"?"زبان":lang==="ru"?"Язык":"Language";
+  const dict=maps[lang]||{};
+  translateDocument(dict);
   try{localStorage.setItem(LANG_KEY,lang)}catch(e){}
+}
+
+const originalText=new WeakMap();
+const originalAttrs=new WeakMap();
+let translating=false;
+function translateValue(raw,dict){
+  if(raw==null) return raw;
+  let out=String(raw);
+  const exact=dict[out.trim()];
+  if(exact!==undefined) return out.replace(out.trim(),exact);
+  Object.keys(dict).sort((a,b)=>b.length-a.length).forEach(k=>{
+    if(k.length>1 && out.includes(k)) out=out.split(k).join(dict[k]);
+  });
+  return out;
+}
+function translateDocument(dict){
+  if(translating) return; translating=true;
+  try{
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:n=>{
+      if(!n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      const p=n.parentElement;
+      if(!p || p.closest("script,style,noscript")) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }});
+    const nodes=[]; let n; while(n=walker.nextNode()) nodes.push(n);
+    nodes.forEach(node=>{
+      if(!originalText.has(node)) originalText.set(node,node.nodeValue);
+      node.nodeValue=translateValue(originalText.get(node),dict);
+    });
+    document.querySelectorAll("input,textarea,select,option,button,a,[title],[aria-label],[placeholder]").forEach(el=>{
+      ["placeholder","title","aria-label"].forEach(attr=>{
+        if(!el.hasAttribute(attr)) return;
+        const key=el+'::'+attr;
+        if(!originalAttrs.has(el)) originalAttrs.set(el,{});
+        const store=originalAttrs.get(el);
+        if(store[attr]===undefined) store[attr]=el.getAttribute(attr);
+        el.setAttribute(attr,translateValue(store[attr],dict));
+      });
+      if(el.tagName==="INPUT" && /^(submit|button)$/i.test(el.type||"") && el.value){
+        if(!originalAttrs.has(el)) originalAttrs.set(el,{});
+        const store=originalAttrs.get(el);
+        if(store.value===undefined) store.value=el.value;
+        el.value=translateValue(store.value,dict);
+      }
+    });
+    // Keep the live chart's time label in the selected locale.
+    const upd=document.getElementById("resourceUpdated");
+    if(upd){
+      const nowText=langNow(dict);
+      upd.textContent=nowText;
+    }
+  }finally{translating=false}
+}
+function langNow(dict){
+  const lang=document.documentElement.lang;
+  const locale=lang==="ru"?"ru-RU":lang==="en"?"en-US":"fa-IR";
+  const label=lang==="ru"?"Обновлено":lang==="en"?"Updated":"به‌روزرسانی";
+  return label+": "+new Date().toLocaleTimeString(locale,{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
 const lb=document.getElementById("languageToggle"), lm=document.getElementById("languageMenu");
 let current="en"; try{current=localStorage.getItem(LANG_KEY)||"en"}catch(e){}
 if(!maps[current]) current="en";
-if(lb) lb.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();if(lm) lm.hidden=!lm.hidden;});
-if(lm) lm.querySelectorAll("[data-lang-choice]").forEach(x=>x.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();setLanguage(x.dataset.langChoice);}));
-document.addEventListener("click",function(e){if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true;});
+if(lb) lb.addEventListener("click",e=>{e.stopPropagation();if(lm)lm.hidden=!lm.hidden});
+if(lm) lm.querySelectorAll("[data-lang-choice]").forEach(x=>x.addEventListener("click",()=>setLanguage(x.dataset.langChoice)));
+document.addEventListener("click",e=>{if(lm&&!lm.hidden&&!lm.contains(e.target)&&e.target!==lb)lm.hidden=true});
 setLanguage(current);
-const observer=new MutationObserver(function(records){if(applying)return;const lang=document.documentElement.lang||"en";const dict=maps[lang]||maps.en;records.forEach(r=>{r.addedNodes.forEach(n=>{if(n.nodeType===1){translateElement(n,dict);n.querySelectorAll&&n.querySelectorAll("*").forEach(x=>translateElement(x,dict));}});});});
+const observer=new MutationObserver(()=>{if(!translating){const lang=document.documentElement.lang||"en";translateDocument(maps[lang]||{});}});
 observer.observe(document.body,{childList:true,subtree:true});
 })();"""
 
@@ -1714,7 +1705,7 @@ def idont_save_ui_settings(s):
 
 def idont_admin_html():
     s=idont_load_ui_settings(); e=html.escape
-    return """<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">
+    return """<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>مدیریت IDONT</title>
 <style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 15% 0%,rgba(139,92,246,.18),transparent 32%),#080b14;color:#eef2ff;font-family:system-ui,sans-serif}
@@ -2007,11 +1998,11 @@ class Handler(BaseHTTPRequestHandler):
 {admin_css}
 <div class="admin-tabs"><a class="admin-tab active" href="{ADMIN_PATH}">🎨 شخصی‌سازی</a><a class="admin-tab" href="/">← داشبورد</a></div>
 <form method="post" action="{ADMIN_PATH}">{hidden_csrf(self.sid())}<div class="glass wide admin-section"><div class="card-head"><div><h3 class="title">🎨 شش تم آماده</h3><p class="sub">کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.</p></div></div><div class="theme-grid">{''.join(cards)}</div></div>
-<div class="grid"><article class="glass card"><h3 class="title">🧩 ظاهر</h3><div class="field"><label>رنگ اصلی</label><input name="primary" value="{e(ui['theme']['primary'])}"></div><div class="field"><label>رنگ دوم</label><input name="secondary" value="{e(ui['theme']['secondary'])}"></div><div class="field"><label>پس‌زمینه</label><input name="background" value="{e(ui['background'].get('value',''))}"></div><div class="field"><label>شفافیت Glass</label><input name="glass_opacity" type="number" step="0.01" min="0.25" max="0.95" inputmode="decimal" value="{ui['theme'].get('glass_opacity',.58)}"></div><div class="field"><label>Blur</label><input name="blur" type="number" step="1" min="0" max="40" inputmode="numeric" value="{ui['theme'].get('blur',18)}"></div><div class="field"><label>گردی کارت</label><input name="radius" type="number" step="1" min="8" max="36" inputmode="numeric" value="{ui['theme'].get('radius',20)}"></div></article>
-<article class="glass card"><h3 class="title">✨ Glow و حرکت</h3><div class="field"><label>شدت Glow</label><input name="glow" type="number" step="0.01" min="0" max="1" inputmode="decimal" value="{ui['theme'].get('glow',.72)}"></div><div class="field"><label>سرعت انیمیشن</label><input name="animation_speed" type="number" step="0.01" min="0.25" max="4" inputmode="decimal" value="{ui['theme'].get('animation_speed',1)}"></div><div class="field"><label>اندازه فونت</label><input name="font_size" type="number" step="1" min="11" max="22" inputmode="numeric" value="{ui['theme'].get('font_size',15)}"></div><div class="field"><label>Logo URL</label><input name="logo_url" value="{e(ui['logo'].get('url',''))}"></div><div class="field"><label>عرض Logo</label><input name="logo_width" type="number" step="1" min="32" max="100" inputmode="numeric" value="{ui['logo'].get('width',54)}"></div></article>
+<div class="grid"><article class="glass card"><h3 class="title">🧩 ظاهر</h3><div class="field"><label>رنگ اصلی</label><input name="primary" value="{e(ui['theme']['primary'])}"></div><div class="field"><label>رنگ دوم</label><input name="secondary" value="{e(ui['theme']['secondary'])}"></div><div class="field"><label>پس‌زمینه</label><input name="background" value="{e(ui['background'].get('value',''))}"></div><div class="field"><label>شفافیت Glass</label><input name="glass_opacity" type="text" inputmode="decimal" value="{ui['theme'].get('glass_opacity',.58)}"></div><div class="field"><label>Blur</label><input name="blur" type="text" inputmode="numeric" value="{ui['theme'].get('blur',18)}"></div><div class="field"><label>گردی کارت</label><input name="radius" type="text" inputmode="numeric" value="{ui['theme'].get('radius',20)}"></div></article>
+<article class="glass card"><h3 class="title">✨ Glow و حرکت</h3><div class="field"><label>شدت Glow</label><input name="glow" type="text" inputmode="decimal" value="{ui['theme'].get('glow',.72)}"></div><div class="field"><label>سرعت انیمیشن</label><input name="animation_speed" type="text" inputmode="decimal" value="{ui['theme'].get('animation_speed',1)}"></div><div class="field"><label>اندازه فونت</label><input name="font_size" type="text" inputmode="numeric" value="{ui['theme'].get('font_size',15)}"></div><div class="field"><label>Logo URL</label><input name="logo_url" value="{e(ui['logo'].get('url',''))}"></div><div class="field"><label>عرض Logo</label><input name="logo_width" type="text" inputmode="numeric" value="{ui['logo'].get('width',54)}"></div></article>
 <article class="glass card"><h3 class="title">📝 متن و برند</h3><div class="field"><label>نام پنل</label><input name="site_name" value="{e(ui['site_name'])}"></div><div class="field"><label>عنوان داشبورد</label><input name="hero_title" value="{e(ui['texts'].get('hero_title','کنترل کامل Backup'))}"></div><div class="field"><label>توضیح داشبورد</label><input name="hero_subtitle" value="{e(ui['texts'].get('hero_subtitle',''))}"></div><div class="field"><label>عنوان Backup</label><input name="backup_title" value="{e(ui['texts']['backup_title'])}"></div><div class="field"><label>عنوان مصرف</label><input name="traffic_title" value="{e(ui['texts']['traffic_title'])}"></div><div class="field"><label>عنوان فعالیت</label><input name="activity_title" value="{e(ui['texts']['activity_title'])}"></div></article>
-<article class="glass card"><h3 class="title">🖥️ چیدمان و تجربه کاربر</h3><div class="field"><label>عرض محتوای داشبورد</label><input name="content_width" type="number" step="1" min="860" max="1500" inputmode="numeric" value="{ui["theme"].get("content_width",1180)}"></div><div class="field"><label>فاصله بین کارت‌ها</label><input name="card_gap" type="number" step="1" min="8" max="32" inputmode="numeric" value="{ui["theme"].get("card_gap",16)}"></div><div class="field"><label>شدت سایه کارت</label><input name="shadow_strength" type="number" step="0.01" min="0" max="1" inputmode="decimal" value="{ui["theme"].get("shadow_strength",0.5)}"></div><div class="field"><label>عنوان کوچک زیر برند</label><input name="brand_subtitle" value="{e(ui.get("brand_subtitle","Backup Control Center · durwinam"))}"></div></article>
-<article class="glass card"><h3 class="title">👁️ بخش‌های داشبورد</h3><label class="toggle"><span>Backup</span><input type="checkbox" name="sec_backup"{checked('backup')}></label><label class="toggle"><span>حجم مصرفی</span><input type="checkbox" name="sec_traffic"{checked('traffic')}></label><label class="toggle"><span>فعالیت‌ها</span><input type="checkbox" name="sec_activity"{checked('activity')}></label><label class="toggle"><span>آمار سرور</span><input type="checkbox" name="sec_server_stats"{checked('server_stats')}></label><div class="field"><label>تعداد فعالیت‌ها</label><input name="activity_limit" type="number" step="1" min="1" max="20" inputmode="numeric" value="{ui.get('activity_limit',3)}"></div></article></div>
+<article class="glass card"><h3 class="title">🖥️ چیدمان و تجربه کاربر</h3><div class="field"><label>عرض محتوای داشبورد</label><input name="content_width" type="text" inputmode="numeric" value="{ui["theme"].get("content_width",1180)}"></div><div class="field"><label>فاصله بین کارت‌ها</label><input name="card_gap" type="text" inputmode="numeric" value="{ui["theme"].get("card_gap",16)}"></div><div class="field"><label>شدت سایه کارت</label><input name="shadow_strength" type="text" inputmode="decimal" value="{ui["theme"].get("shadow_strength",0.5)}"></div><div class="field"><label>عنوان کوچک زیر برند</label><input name="brand_subtitle" value="{e(ui.get("brand_subtitle","Backup Control Center · durwinam"))}"></div></article>
+<article class="glass card"><h3 class="title">👁️ بخش‌های داشبورد</h3><label class="toggle"><span>Backup</span><input type="checkbox" name="sec_backup"{checked('backup')}></label><label class="toggle"><span>حجم مصرفی</span><input type="checkbox" name="sec_traffic"{checked('traffic')}></label><label class="toggle"><span>فعالیت‌ها</span><input type="checkbox" name="sec_activity"{checked('activity')}></label><label class="toggle"><span>آمار سرور</span><input type="checkbox" name="sec_server_stats"{checked('server_stats')}></label><div class="field"><label>تعداد فعالیت‌ها</label><input name="activity_limit" type="text" inputmode="numeric" value="{ui.get('activity_limit',3)}"></div></article></div>
 <div class="glass wide admin-section"><h3 class="title">😀 Emoji Status</h3><div class="emoji-grid">'''
             for k,label in [("active","فعال"),("inactive","غیرفعال"),("warning","هشدار"),("info","اطلاعات")]:
                 em=ui['emojis'][k]
