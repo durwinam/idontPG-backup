@@ -1,3 +1,11 @@
+## v5.6.5
+
+- Added a polished SVG language selector with animated glow.
+- Fixed full Persian / English / Russian switching across rendered UI text, notices, labels, attributes and dynamic messages.
+- English is the default language for new browsers.
+- Fixed decimal admin customization fields so values such as `0.72` no longer trigger browser step-validation errors.
+- Bumped the unified project release to `5.6.5`.
+
 ## v5.6.4
 
 - Improved light-theme icon styling for better contrast and visual consistency.
