@@ -6,6 +6,7 @@
 
 **Backup · Restore · Migration · Telegram · Multi-Database · Docker**
 
+برگرفته از CIAUB
 یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
 **PasarGuard** و **PG-Node** بین سرورها.
 <div align="center">
