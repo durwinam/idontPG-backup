@@ -1,24 +1,39 @@
-🛡️ idontPG-backup
+# 🛡️ idontPG-backup
 
-<div align="center">Advanced Backup & Migration Suite for PasarGuard
+<div align="center">
 
-برگرفته از pg_backup
-Backup · Restore · Migration · Telegram · Multi-Database · Docker
+### Advanced Backup & Migration Suite for PasarGuard
 
-یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های
-PasarGuard و PG-Node بین سرورها.
+برگرفته از pg_backup  
+**Backup · Restore · Migration · Telegram · Multi-Database · Docker**
+
+یک ابزار کامل برای مدیریت بکاپ، بازیابی و انتقال زیرساخت‌های  
+**PasarGuard** و **PG-Node** بین سرورها.
 
 <div align="center">
   <img src="idontPG-img.png" alt="idontPG-backup Logo" width="300">
-</div><br><div align="center">
+</div>
+
+<br>
+
+<div align="center">
   <img src="github-preview.png" alt="idontPG-backup Preview" width="900">
-</div><br>""Version" (https://img.shields.io/badge/version-v5.6.4-7c3aed?style=for-the-badge)" (https://github.com/durwinam/idontPG-backup)
-""Python" (https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)" (https://www.python.org/)
-""Docker" (https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)" (https://www.docker.com/)
-""License" (https://img.shields.io/badge/license-MIT-green?style=for-the-badge)" (https://github.com/durwinam/idontPG-backup)
+</div>
 
-</div>---
+</div>
 
+---
+
+<div align="center">
+
+[![Version](https://img.shields.io/badge/version-v5.6.4-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+
+</div>
+
+---
 🌐 Web Panel
 
 🖥️ Professional Backup Management & Monitoring
