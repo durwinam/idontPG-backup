@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import secrets
+import ssl
 import subprocess
 import time
 import urllib.parse
@@ -789,20 +790,262 @@ def _sum_all_panel_users(token):
     return total_used
 
 
-def get_panel_storage_usage():
-    """Return total user traffic reported by PasarGuard's Node-backed users.
+# ── PasarGuard Node traffic (direct Node API) ───────────────────────────────
+# The Node REST API uses protobuf for /stats/. We keep a tiny protobuf codec
+# here instead of adding a heavy runtime dependency to this lightweight panel.
+NODE_TRAFFIC_FILE = STATE_DIR / "node_traffic.json"
+_NODE_TRAFFIC_CACHE = {"ts": 0.0, "value": None}
+_NODE_TRAFFIC_LOCK = __import__("threading").Lock()
 
-    PasarGuard exposes user usage through GET /api/users; each user contains
-    ``used_traffic`` populated from the connected Node(s). Walk every page so
-    the dashboard does not accidentally show only the first 100 users.
-    """
+
+def _pb_varint(value):
+    value = int(value)
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value & 0x7F)
+    return bytes(out)
+
+
+def _pb_read_varint(data, pos):
+    value = 0
+    shift = 0
+    n = len(data)
+    while pos < n:
+        b = data[pos]
+        pos += 1
+        value |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return value, pos
+        shift += 7
+        if shift > 70:
+            raise ValueError("invalid protobuf varint")
+    raise ValueError("truncated protobuf varint")
+
+
+def _pb_fields(data):
+    """Yield (field_number, wire_type, value) for a protobuf message."""
+    pos = 0
+    n = len(data)
+    while pos < n:
+        key, pos = _pb_read_varint(data, pos)
+        field_no, wire = key >> 3, key & 7
+        if field_no <= 0:
+            raise ValueError("invalid protobuf field")
+        if wire == 0:
+            value, pos = _pb_read_varint(data, pos)
+        elif wire == 1:
+            if pos + 8 > n: raise ValueError("truncated fixed64")
+            value, pos = data[pos:pos + 8], pos + 8
+        elif wire == 2:
+            size, pos = _pb_read_varint(data, pos)
+            if pos + size > n: raise ValueError("truncated bytes")
+            value, pos = data[pos:pos + size], pos + size
+        elif wire == 5:
+            if pos + 4 > n: raise ValueError("truncated fixed32")
+            value, pos = data[pos:pos + 4], pos + 4
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire}")
+        yield field_no, wire, value
+
+
+def _pb_stat_request(name="", reset=False, stat_type=4):
+    body = bytearray()
+    if name:
+        raw = str(name).encode("utf-8")
+        body += b"\x0a" + _pb_varint(len(raw)) + raw
+    if reset:
+        body += b"\x10\x01"
+    # StatType.UsersStat = 4 in the official Node protobuf.
+    if stat_type:
+        body += b"\x18" + _pb_varint(stat_type)
+    return bytes(body)
+
+
+def _pb_parse_stat_response(data):
+    stats = []
+    for field_no, wire, value in _pb_fields(data):
+        if field_no != 1 or wire != 2:
+            continue
+        name = stat_type = link = ""
+        amount = 0
+        try:
+            for sf, sw, sv in _pb_fields(value):
+                if sf in (1, 2, 3) and sw == 2:
+                    text = sv.decode("utf-8", "replace")
+                    if sf == 1: name = text
+                    elif sf == 2: stat_type = text
+                    else: link = text
+                elif sf == 4 and sw == 0:
+                    amount = int(sv)
+        except Exception:
+            continue
+        stats.append({"name": name, "type": stat_type, "link": link, "value": amount})
+    return stats
+
+
+def _node_json_list(payload):
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("nodes", "items", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return _node_json_list(data)
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    return []
+
+
+def _discover_pg_nodes(token):
+    nodes = []
+    offset = 0
+    limit = 100
+    seen = set()
+    while offset < 10000:
+        payload = _pg_json_get(f"/nodes?limit={limit}&offset={offset}", token)
+        page = _node_json_list(payload)
+        if not page:
+            break
+        marker = json.dumps(page, sort_keys=True, ensure_ascii=False)[:4000]
+        if marker in seen:
+            break
+        seen.add(marker)
+        nodes.extend(page)
+        if len(page) < limit:
+            break
+        offset += len(page)
+    return nodes
+
+
+def _node_endpoint(node):
+    address = str(node.get("address") or node.get("host") or node.get("ip") or "").strip()
+    port = str(node.get("port") or "").strip()
+    if not address:
+        return ""
+    if "://" in address:
+        base = address.rstrip("/")
+        if port and urllib.parse.urlparse(base).port is None:
+            base += ":" + port
+    else:
+        # IPv6 literals need brackets when a port is appended.
+        if ":" in address and not address.startswith("[") and address.count(":") > 1:
+            address = f"[{address}]"
+        base = "https://" + address + (f":{port}" if port else "")
+    return base.rstrip("/") + "/stats/"
+
+
+def _node_ssl_context(node):
+    ca = str(node.get("server_ca") or node.get("serverCA") or "").strip()
+    if ca:
+        ctx = ssl.create_default_context()
+        try:
+            ctx.load_verify_locations(cadata=ca)
+            return ctx
+        except Exception:
+            # A malformed/stale CA should not make the whole dashboard fail.
+            pass
+    return ssl.create_default_context()
+
+
+def _node_stats_raw(node):
+    url = _node_endpoint(node)
+    api_key = str(node.get("api_key") or node.get("apiKey") or "").strip()
+    if not url or not api_key:
+        return None
+    req = urllib.request.Request(url, data=_pb_stat_request(stat_type=4), method="GET")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    # Some current Node bridge deployments use x-api-key; sending both is
+    # harmless and keeps compatibility with older/newer Node builds.
+    req.add_header("X-Api-Key", api_key)
+    req.add_header("Content-Type", "application/x-protobuf")
+    req.add_header("Accept", "application/x-protobuf")
+    req.add_header("User-Agent", f"{APP}/{VERSION}")
+    with urllib.request.urlopen(req, timeout=4, context=_node_ssl_context(node)) as response:
+        stats = _pb_parse_stat_response(response.read())
+    total = 0
+    for item in stats:
+        # UsersStat returns per-user uplink/downlink counters. Ignore any
+        # unrelated aggregate records to avoid double-counting.
+        direction = str(item.get("type") or "").lower()
+        if direction in ("uplink", "downlink"):
+            total += max(0, int(item.get("value") or 0))
+    if total == 0:
+        # Be tolerant of Node builds that omit the direction field.
+        total = sum(max(0, int(x.get("value") or 0)) for x in stats)
+    return total
+
+
+def _load_node_traffic_state():
     try:
-        token = _pg_api_token()
-        if not token:
-            return "قابل دریافت نیست"
-        return _format_bytes(_sum_all_panel_users(token))
+        raw = json.loads(NODE_TRAFFIC_FILE.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {"nodes": {}}
     except Exception:
-        return "قابل دریافت نیست"
+        return {"nodes": {}}
+
+
+def _save_node_traffic_state(state):
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = NODE_TRAFFIC_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(NODE_TRAFFIC_FILE)
+    except Exception:
+        pass
+
+
+def get_panel_storage_usage():
+    """Return cumulative traffic collected directly from PasarGuard Nodes.
+
+    The panel is used only to discover the registered Nodes (address, port,
+    API key and CA). Traffic itself is read from each Node's protobuf REST
+    /stats/ endpoint with reset=false. A tiny persistent accumulator protects
+    the displayed total when Xray/Panel counters are reset.
+    """
+    now = time.time()
+    with _NODE_TRAFFIC_LOCK:
+        if _NODE_TRAFFIC_CACHE.get("value") is not None and now - _NODE_TRAFFIC_CACHE.get("ts", 0) < 15:
+            return _format_bytes(_NODE_TRAFFIC_CACHE["value"])
+        try:
+            token = _pg_api_token()
+            if not token:
+                return "قابل دریافت نیست"
+            nodes = _discover_pg_nodes(token)
+            state = _load_node_traffic_state()
+            state_nodes = state.setdefault("nodes", {})
+            for node in nodes:
+                status = str(node.get("status") or "").lower()
+                if status and status not in ("connected", "online", "active"):
+                    continue
+                key = str(node.get("id") or node.get("name") or node.get("address") or "")
+                if not key:
+                    continue
+                try:
+                    raw = _node_stats_raw(node)
+                except Exception:
+                    continue
+                if raw is None:
+                    continue
+                previous = state_nodes.get(key, {}) if isinstance(state_nodes.get(key), dict) else {}
+                last_raw = int(previous.get("raw") or 0)
+                accumulated = int(previous.get("total") or 0)
+                # Counter reset/restart: the new raw value is fresh traffic.
+                delta = raw - last_raw if raw >= last_raw else raw
+                accumulated += max(0, delta)
+                state_nodes[key] = {"raw": raw, "total": accumulated, "updated": now}
+            total = sum(max(0, int(v.get("total") or 0)) for v in state_nodes.values() if isinstance(v, dict))
+            state["updated"] = now
+            _save_node_traffic_state(state)
+            _NODE_TRAFFIC_CACHE.update({"ts": now, "value": total})
+            return _format_bytes(total)
+        except Exception:
+            return "قابل دریافت نیست"
 
 def get_disk_info():
     try:
@@ -1213,7 +1456,7 @@ class Handler(BaseHTTPRequestHandler):
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">اطلاعات Backup</h3><p class="sub">Backup Information</p></div></div></div>
 <div class="meta"><div class="meta-row"><span>{ui_icon("backup", "meta-icon")} تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>{ui_icon("disk", "meta-icon")} حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><span class="panel-brand-icon card-icon" aria-label="PasarGuard"><img src="/static/pasarguard-logo.png" alt="PasarGuard" onerror="this.style.display='none';this.parentElement.classList.add('logo-fallback')"><span class="logo-fallback-text">PG</span></span><div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status-wrap">{status_badge('آنلاین' if panel_info['status'] == 'Online' else 'آفلاین', 'ok' if panel_info['status'] == 'Online' else 'bad')}</span></div>
-<div class="meta"><div class="meta-row"><span class="meta-label">{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row has-status"><span class="meta-label">{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span class="meta-label">{ui_icon("traffic", "meta-icon")} مصرف کلی پنل</span><strong>{html.escape(panel_used)}</strong></div></div></article>
+<div class="meta"><div class="meta-row"><span class="meta-label">{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row has-status"><span class="meta-label">{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span class="meta-label">{ui_icon("traffic", "meta-icon")} مصرف واقعی Node</span><strong title="دریافت مستقیم از PasarGuard Node">{html.escape(panel_used)}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("telegram", "card-icon")}<div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div>{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</div>
 <div class="meta"><div class="meta-row"><span>Bot Token</span><span>{html.escape(masked)}</span></div><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>بازه</span><span>{html.escape(str(c.get('interval','24')))} ساعت</span></div></div>
 <div class="actions"><a class="btn primary" href="/telegram">{ui_icon("settings", "inline-icon")} تنظیمات Telegram</a><a class="btn" href="/test">{ui_icon("test", "inline-icon")} ارسال تست</a></div></article>
