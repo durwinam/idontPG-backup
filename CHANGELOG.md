@@ -1,4 +1,4 @@
-## v5.6.2
+## v5.6.3
 
 - Fixed Web Panel HTML/CSS rendering so stylesheet content is not shown as page text.
 - Fixed admin customization save flow.

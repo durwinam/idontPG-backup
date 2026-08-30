@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.6.2"
+VERSION = "5.6.3"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
@@ -1551,7 +1551,7 @@ label{display:block;font-size:12px;opacity:.75;margin:9px 0 5px}.btn{display:inl
 <label>Background</label><input name="background" value="%s">
 <label>Logo URL</label><input name="logo_url" value="%s">
 <label>عرض Logo</label><input name="logo_width" type="number" min="24" max="240" value="%s">
-<label>شدت Glow</label><input name="global_glow" type="number" min="0" max="1" step=".05" value="%s">
+<label>شدت Glow</label><input name="global_glow" type="number" min="0" max="1" step=".01" value="%s">
 </div></div>
 <div class="card"><h2>😀 Emoji / Status</h2>
 <div class="row"><b>وضعیت</b><b>آیکون</b><b>رنگ</b><b>Glow</b><b>سرعت</b></div>
@@ -1575,7 +1575,7 @@ e(s["site_name"]),s["activity_limit"],s["theme"]["font_size"],
 "checked" if s["sections"]["traffic"] else "","checked" if s["sections"]["activity"] else "",
 "checked" if s["sections"]["server_stats"] else "",e(s["theme"]["primary"]),e(s["theme"]["secondary"]),
 e(s["background"]["value"]),e(s["logo"]["url"]),s["logo"]["width"],s["theme"]["glow"],
-"".join('<div class="row"><b>%s</b><input name="emoji_%s" value="%s"><input name="color_%s" value="%s"><input name="glow_%s" type="number" step=".05" min="0" max="1" value="%s"><input name="speed_%s" type="number" step=".1" min=".4" max="4" value="%s"></div>' %
+"".join('<div class="row"><b>%s</b><input name="emoji_%s" value="%s"><input name="color_%s" value="%s"><input name="glow_%s" type="number" step=".01" min="0" max="1" value="%s"><input name="speed_%s" type="number" step=".1" min=".4" max="4" value="%s"></div>' %
 (label,key,e(s["emojis"][key]["icon"]),key,e(s["emojis"][key]["color"]),key,s["emojis"][key]["glow"],key,s["emojis"][key]["speed"])
 for key,label in [("active","فعال"),("inactive","غیرفعال"),("warning","هشدار"),("info","اطلاعات")]),
 e(s["texts"]["dashboard_title"]),e(s["texts"]["backup_title"]),e(s["texts"]["traffic_title"]),e(s["texts"]["activity_title"]),
@@ -1755,13 +1755,13 @@ class Handler(BaseHTTPRequestHandler):
 <div class="admin-tabs"><a class="admin-tab active" href="{ADMIN_PATH}">🎨 شخصی‌سازی</a><a class="admin-tab" href="/">← داشبورد</a></div>
 <form method="post" action="{ADMIN_PATH}">{hidden_csrf(self.sid())}<div class="glass wide admin-section"><div class="card-head"><div><h3 class="title">🎨 شش تم آماده</h3><p class="sub">کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.</p></div></div><div class="theme-grid">{''.join(cards)}</div></div>
 <div class="grid"><article class="glass card"><h3 class="title">🧩 ظاهر</h3><div class="field"><label>رنگ اصلی</label><input name="primary" value="{e(ui['theme']['primary'])}"></div><div class="field"><label>رنگ دوم</label><input name="secondary" value="{e(ui['theme']['secondary'])}"></div><div class="field"><label>پس‌زمینه</label><input name="background" value="{e(ui['background'].get('value',''))}"></div><div class="field"><label>شفافیت Glass</label><input name="glass_opacity" type="number" min=".25" max=".95" step=".01" value="{ui['theme'].get('glass_opacity',.58)}"></div><div class="field"><label>Blur</label><input name="blur" type="number" min="0" max="40" value="{ui['theme'].get('blur',18)}"></div><div class="field"><label>گردی کارت</label><input name="radius" type="number" min="8" max="36" value="{ui['theme'].get('radius',20)}"></div></article>
-<article class="glass card"><h3 class="title">✨ Glow و حرکت</h3><div class="field"><label>شدت Glow</label><input name="glow" type="number" min="0" max="1" step=".05" value="{ui['theme'].get('glow',.72)}"></div><div class="field"><label>سرعت انیمیشن</label><input name="animation_speed" type="number" min=".2" max="3" step=".1" value="{ui['theme'].get('animation_speed',1)}"></div><div class="field"><label>اندازه فونت</label><input name="font_size" type="number" min="11" max="22" value="{ui['theme'].get('font_size',15)}"></div><div class="field"><label>Logo URL</label><input name="logo_url" value="{e(ui['logo'].get('url',''))}"></div><div class="field"><label>عرض Logo</label><input name="logo_width" type="number" min="24" max="240" value="{ui['logo'].get('width',54)}"></div></article>
+<article class="glass card"><h3 class="title">✨ Glow و حرکت</h3><div class="field"><label>شدت Glow</label><input name="glow" type="number" min="0" max="1" step=".01" value="{ui['theme'].get('glow',.72)}"></div><div class="field"><label>سرعت انیمیشن</label><input name="animation_speed" type="number" min=".2" max="3" step=".1" value="{ui['theme'].get('animation_speed',1)}"></div><div class="field"><label>اندازه فونت</label><input name="font_size" type="number" min="11" max="22" value="{ui['theme'].get('font_size',15)}"></div><div class="field"><label>Logo URL</label><input name="logo_url" value="{e(ui['logo'].get('url',''))}"></div><div class="field"><label>عرض Logo</label><input name="logo_width" type="number" min="24" max="240" value="{ui['logo'].get('width',54)}"></div></article>
 <article class="glass card"><h3 class="title">📝 متن و برند</h3><div class="field"><label>نام پنل</label><input name="site_name" value="{e(ui['site_name'])}"></div><div class="field"><label>عنوان داشبورد</label><input name="hero_title" value="{e(ui['texts'].get('hero_title','کنترل کامل Backup'))}"></div><div class="field"><label>توضیح داشبورد</label><input name="hero_subtitle" value="{e(ui['texts'].get('hero_subtitle',''))}"></div><div class="field"><label>عنوان Backup</label><input name="backup_title" value="{e(ui['texts']['backup_title'])}"></div><div class="field"><label>عنوان مصرف</label><input name="traffic_title" value="{e(ui['texts']['traffic_title'])}"></div><div class="field"><label>عنوان فعالیت</label><input name="activity_title" value="{e(ui['texts']['activity_title'])}"></div></article>
 <article class="glass card"><h3 class="title">👁️ بخش‌های داشبورد</h3><label class="toggle"><span>Backup</span><input type="checkbox" name="sec_backup"{checked('backup')}></label><label class="toggle"><span>حجم مصرفی</span><input type="checkbox" name="sec_traffic"{checked('traffic')}></label><label class="toggle"><span>فعالیت‌ها</span><input type="checkbox" name="sec_activity"{checked('activity')}></label><label class="toggle"><span>آمار سرور</span><input type="checkbox" name="sec_server_stats"{checked('server_stats')}></label><div class="field"><label>تعداد فعالیت‌ها</label><input name="activity_limit" type="number" min="1" max="20" value="{ui.get('activity_limit',3)}"></div></article></div>
 <div class="glass wide admin-section"><h3 class="title">😀 Emoji Status</h3><div class="emoji-grid">'''
             for k,label in [("active","فعال"),("inactive","غیرفعال"),("warning","هشدار"),("info","اطلاعات")]:
                 em=ui['emojis'][k]
-                body+=f'<div class="emoji-editor"><b>{label}</b><input name="emoji_{k}" value="{e(em["icon"])}"><input name="emoji_color_{k}" value="{e(em["color"])}"><input name="emoji_glow_{k}" type="number" min="0" max="1" step=".05" value="{em.get("glow",.72)}"><input name="emoji_speed_{k}" type="number" min=".3" max="4" step=".1" value="{em.get("speed",1.35)}"></div>'
+                body+=f'<div class="emoji-editor"><b>{label}</b><input name="emoji_{k}" value="{e(em["icon"])}"><input name="emoji_color_{k}" value="{e(em["color"])}"><input name="emoji_glow_{k}" type="number" min="0" max="1" step=".01" value="{em.get("glow",.72)}"><input name="emoji_speed_{k}" type="number" min=".3" max="4" step=".1" value="{em.get("speed",1.35)}"></div>'
             body+=f'''</div></div><div class="glass wide admin-section"><h3 class="title">➕ دکمه سفارشی</h3><div class="field"><label>نام</label><input name="button_name"></div><div class="field"><label>آیکون</label><input name="button_icon" value="🔗"></div><div class="field"><label>لینک</label><input name="button_url" placeholder="https://..."></div><div class="actions"><button class="btn primary" type="submit" name="save_settings" value="1">💾 ذخیره همه تغییرات</button></div></div></form>'''
             self.send_html(page("Admin", body)); return
 
