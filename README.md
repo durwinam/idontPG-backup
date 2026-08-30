@@ -100,11 +100,9 @@ PasarGuard و PG-Node است که با هدف ساده‌کردن فرآینده
 
 ---
 
-⚡ قابلیت‌های اصلی
+# ⚡ قابلیت‌های اصلی
 
-قابلیت| توضیح
-🐳 Docker | قابلیت | توضیح |
-|---|---|
+| قابلیت | توضیح |
 | 🐳 Docker Environment | پشتیبانی و مدیریت در محیط Docker |
 | 🤖 Automatic Telegram Backup | بکاپ خودکار و ارسال به Telegram |
 | 🗄️ Backup Storage | نگهداری و مدیریت Backupها |
