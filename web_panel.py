@@ -1,5 +1,5 @@
-from importlib.machinery import SourceFileLoader
 #!/usr/bin/env python3
+from importlib.machinery import SourceFileLoader
 """idontPG-backup Web Panel
 Author: durwinam
 A dependency-free dark glass web UI for Telegram backup configuration.
@@ -1677,6 +1677,126 @@ EN_TRANSLATIONS = {
     "فقط برای مدیر اصلی": "Main administrator only", "لینک ورود": "Login Link", "سرور": "Server",
 }
 
+RU_TRANSLATIONS = {
+    # Core UI
+    "بستن منو": "Закрыть меню", "منوی اصلی": "Главное меню", "داشبورد": "Панель управления", "نمای کلی سیستم": "Обзор системы",
+    "بکاپ تلگرام": "Резервное копирование в Telegram", "تنظیمات و ارسال": "Настройки и отправка",
+    "تنظیمات بکاپ": "Настройки резервного копирования", "تنظیمات و Backup": "Настройки и резервное копирование", "Scheduler و Backup": "Планировщик и резервное копирование",
+    "تست تلگرام": "Тест Telegram", "بررسی اتصال": "Проверка соединения", "لاگ‌ها": "Журналы", "ورود و فعالیت": "Входы и действия",
+    "حساب کاربری": "Учетная запись", "مدیریت ورود": "Управление входом", "دکمه": "Кнопка", "لینک سفارشی": "Пользовательская ссылка",
+    "تم‌های شخصی": "Персональные темы", "خروج": "Выйти", "پایان نشست": "Завершить сеанс", "باز کردن منو": "Открыть меню", "منو": "Меню",
+    "انتخاب تم": "Выбор темы", "روز": "Светлая", "شب": "Темная", "تم": "Тема", "زبان": "Язык", "فارسی": "Персидский", "English": "Английский", "Русский": "Русский",
+    "اطلاعات بکاپ": "Информация о резервных копиях", "حجم مصرفی": "Использование данных", "فعالیت‌های اخیر": "Последние действия",
+    "وضعیت لحظه‌ای سرور": "Состояние сервера в реальном времени", "نمودار لحظه‌ای منابع سرور": "График ресурсов сервера в реальном времени",
+    "اکنون": "Сейчас", "به‌روزرسانی:": "Обновлено:", "در حال اجرا": "Работает", "تنظیم شده": "Настроено", "تنظیم نشده": "Не настроено",
+    "فعال": "Активен", "متوقف": "Остановлен", "غیرفعال": "Неактивен", "استفاده": "Использование", "هشدار": "Предупреждение", "اطلاعات": "Информация",
+    # Login / setup
+    "ورود به پنل": "Вход в панель", "برای ورود، نام کاربری و رمز عبور ادمین را وارد کنید.": "Введите имя пользователя и пароль администратора для входа.",
+    "نام کاربری": "Имя пользователя", "رمز عبور": "Пароль", "ورود امن ←": "Безопасный вход →", "ورود امن": "Безопасный вход",
+    "راه‌اندازی اولیه": "Первоначальная настройка", "برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.": "Для защиты панели создайте имя пользователя длиной 5–32 символа и пароль не менее 8 символов: минимум 2 буквы, 1 цифра и один из символов # @ *.",
+    "تکرار رمز": "Подтверждение пароля", "ساخت حساب و ورود": "Создать учетную запись и войти", "تلاش دوباره": "Повторить",
+    "نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.": "Имя пользователя должно содержать 5–32 символа: только латинские буквы, цифры или дефис.",
+    "رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.": "Пароль должен содержать минимум 8 символов, 2 буквы, 1 цифру и один из символов # @ *.",
+    "تکرار رمز عبور با رمز جدید یکسان نیست.": "Подтверждение пароля не совпадает с новым паролем.",
+    "رمز ادمین": "Пароль администратора", "نام کاربری ادمین": "Имя пользователя администратора", "ورود به مدیریت": "Войти в управление",
+    "مدیریت خصوصی": "Приватное управление", "این بخش فقط برای مدیر اصلی است.": "Этот раздел доступен только главному администратору.",
+    "تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.": "Слишком много попыток. Повторите через 15 минут.", "نام کاربری یا رمز ادمین اشتباه است.": "Неверное имя пользователя или пароль администратора.",
+    "نام کاربری یا رمز عبور اشتباه است.": "Неверное имя пользователя или пароль.",
+    # Backup / telegram
+    "مدیریت Backupها": "Управление резервными копиями", "آخرین Backup ذخیره‌شده یا ارسال‌شده به Telegram همیشه در بالای این بخش قرار می‌گیرد.": "Последняя сохраненная или отправленная в Telegram резервная копия всегда отображается сверху.",
+    "۳ Backup اخیر": "3 последние резервные копии", "Backup قدیمی دیگری وجود ندارد.": "Других старых резервных копий нет.", "ساخت Backup جدید": "Создать резервную копию",
+    "بکاپ تلگرام": "Резервное копирование в Telegram", "اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.": "Настройте бота, получателя, тему, прокси и расписание, затем запустите планировщик.",
+    "Bot Token و Chat ID الزامی هستند.": "Токен бота и Chat ID обязательны.", "Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.": "Недействительный Topic ID. Укажите номер message_thread_id или ссылку на тему Telegram.",
+    "فایل Backup ساخته نشد.": "Не удалось создать резервную копию.", "Backup پیدا نشد.": "Резервная копия не найдена.", "خواندن Backup ناموفق بود.": "Не удалось прочитать резервную копию.",
+    "Backup با موفقیت ساخته و ارسال شد.": "Резервная копия успешно создана и отправлена.", "Backup ناموفق بود.": "Ошибка резервного копирования.",
+    "Backup و ارسال به Telegram موفق بود": "Резервная копия создана и отправлена в Telegram", "Backup ساخته شد ولی ارسال Telegram ناموفق بود": "Резервная копия создана, но отправка в Telegram не удалась",
+    "Backup دستی ساخته شد": "Ручная резервная копия создана", "Backup ساخته شد: ": "Создана резервная копия: ",
+    "ارسال پیام تست": "Отправить тестовое сообщение", "ارسال تست": "Отправить тест", "ارسال پیام تست به Telegram": "Отправить тестовое сообщение в Telegram",
+    "پیام تست با موفقیت ارسال شد.": "Тестовое сообщение успешно отправлено.", "ارسال پیام تست ناموفق بود.": "Не удалось отправить тестовое сообщение.",
+    "تنظیمات Telegram": "Настройки Telegram", "تنظیمات Telegram با موفقیت ذخیره شد.": "Настройки Telegram успешно сохранены.", "ذخیره تنظیمات": "Сохранить настройки",
+    "برگشت به Telegram": "Вернуться к Telegram", "تست اتصال": "Проверить соединение", "برگشت": "Назад",
+    "Telegram Bot Token": "Токен бота Telegram", "توکن BotFather را وارد کنید.": "Введите токен от BotFather.", "Chat ID": "Chat ID", "Topic / Thread ID": "Topic / Thread ID",
+    "شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.": "Укажите номер темы; ссылка на тему Telegram также поддерживается.", "Telegram Proxy": "Прокси Telegram", "اختیاری. اگر Proxy ندارید خالی بگذارید.": "Необязательно. Оставьте пустым, если прокси не используется.",
+    "زمان‌بندی خودکار": "Автоматическое расписание", "بازه Backup (ساعت)": "Интервал резервного копирования (часы)", "شامل PG-Node شود": "Включать PG-Node", "ذخیره و شروع": "Сохранить и запустить", "توقف": "Остановить",
+    "Backup دستی": "Ручное резервное копирование", "همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.": "Создайте полную резервную копию и отправьте ее текущему получателю Telegram согласно настройкам.", "شروع Backup دستی": "Запустить ручное резервное копирование",
+    "کنترل Scheduler و اجرای Backup دستی.": "Управление планировщиком и ручным резервным копированием.",
+    "Scheduler ذخیره و شروع شد.": "Планировщик сохранен и запущен.", "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد.": "Планировщик сохранен, но не удалось его запустить.",
+    "Backup با موفقیت ساخته و ارسال شد.": "Резервная копия успешно создана и отправлена.", "Backup پیدا نشد.": "Резервная копия не найдена.",
+    # Account / logs
+    "نام کاربری و رمز ورود را مدیریت کنید.": "Управляйте именем пользователя и паролем входа.", "رمز عبور جدید": "Новый пароль", "رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.": "Новый пароль должен содержать минимум 8 символов, латинские буквы, одну заглавную букву, одну цифру и специальный символ.",
+    "تکرار رمز جدید": "Подтверждение нового пароля", "برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.": "Для смены пароля введите минимум 8 символов. Если пароль менять не нужно, оставьте поле пустым.",
+    "تنظیمات حساب با موفقیت ذخیره شد.": "Настройки учетной записи успешно сохранены.", "آخرین ورود": "Последний вход", "آخرین ورود موفق": "Последний успешный вход", "زمان": "Время", "دستگاه / مرورگر": "Устройство / браузер",
+    "تاریخچه کامل فعالیت‌های پنل": "Полная история действий панели", "هنوز فعالیتی ثبت نشده است.": "Действий пока нет.", "فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.": "Отображается только история входов этой учетной записи.",
+    # Audit labels
+    "ورود موفق به پنل": "Успешный вход в панель", "تلاش ورود ناموفق": "Неудачная попытка входа", "ورود موفق بخش مدیریت": "Успешный вход в управление", "ورود ناموفق بخش مدیریت": "Неудачная попытка входа в управление",
+    "شروع Backup": "Запуск резервного копирования", "ساخت موفق Backup": "Резервная копия успешно создана", "خطای Backup": "Ошибка резервного копирования", "ارسال موفق Backup به Telegram": "Резервная копия успешно отправлена в Telegram", "شکست ارسال Backup به Telegram": "Ошибка отправки резервной копии в Telegram",
+    "تست موفق Telegram": "Тест Telegram выполнен успешно", "تست ناموفق Telegram": "Тест Telegram завершился ошибкой", "شروع Scheduler": "Запуск планировщика", "Restart Scheduler": "Перезапуск планировщика", "Stop Scheduler": "Остановка планировщика",
+    "تغییر تنظیمات Telegram": "Изменение настроек Telegram", "تغییر تنظیمات حساب": "Изменение настроек учетной записи", "حذف Backup": "Удаление резервной копии", "خروج از پنل": "Выход из панели", "تغییر زبان": "Смена языка",
+    "تاریخچه کامل فعالیت‌های پنل": "Полная история действий панели",
+    # Admin
+    "مرکز مدیریت": "Центр управления", "شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.": "Полная настройка внешнего вида, панели и компонентов веб-панели.", "شخصی‌سازی": "Персонализация", "شش تم آماده": "Шесть готовых тем", "کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.": "Обычный пользователь не видит элементы управления темами администратора.",
+    "ظاهر": "Внешний вид", "رنگ اصلی": "Основной цвет", "رنگ دوم": "Дополнительный цвет", "پس‌زمینه": "Фон", "شفافیت Glass": "Прозрачность стекла", "گردی کارت": "Скругление карточек", "شدت Glow": "Интенсивность свечения", "سرعت انیمیشن": "Скорость анимации", "اندازه فونت": "Размер шрифта",
+    "متن و برند": "Текст и бренд", "عنوان داشبورد": "Заголовок панели", "توضیح داشبورد": "Описание панели", "عنوان Backup": "Заголовок резервных копий", "عنوان مصرف": "Заголовок использования", "عنوان فعالیت": "Заголовок действий", "چیدمان و تجربه کاربر": "Макет и интерфейс",
+    "عرض محتوای داشبورد": "Ширина содержимого панели", "فاصله بین کارت‌ها": "Расстояние между карточками", "شدت سایه کارت": "Интенсивность тени карточек", "عنوان کوچک زیر برند": "Подзаголовок бренда", "بخش‌های داشبورد": "Разделы панели", "تعداد فعالیت‌ها": "Количество действий", "دکمه سفارشی": "Пользовательская кнопка", "ذخیره همه تغییرات": "Сохранить все изменения",
+    "مدیریت خصوصی": "Приватное управление", "این بخش فقط برای مدیر اصلی است.": "Этот раздел доступен только главному администратору.", "فعالیت‌ها": "Действия", "آمار سرور": "Статистика сервера", "دکمه‌های فعلی": "Текущие кнопки", "افزودن دکمه": "Добавить кнопку", "نام": "Название", "لینک": "Ссылка", "آیکون": "Иконка", "رنگ": "Цвет", "سرعت": "Скорость", "متن‌ها": "Тексты", "وضعیت": "Состояние",
+    # Common English technical UI terms
+    "Backup": "резервная копия", "Backups": "резервные копии", "Manual Backup": "Ручная резервная копия", "Telegram Backup": "Резервное копирование в Telegram", "Backup Manager": "Управление резервными копиями", "Backup Settings": "Настройки резервного копирования", "Telegram Test": "Тест Telegram", "Logs": "Журналы", "Account": "Учетная запись", "Admin": "Администратор", "Admin Login": "Вход администратора", "Login": "Вход", "Setup": "Настройка", "First Run": "Первоначальная настройка", "Security": "Безопасность", "Not Found": "Не найдено", "Manual": "Ручной", "Next Backup": "Следующая резервная копия", "Backup and Scheduler Control": "Управление резервным копированием и планировщиком", "Activity": "Действие", "Theme": "Тема", "Language": "Язык", "Panel Login": "Вход в панель", "Panel Link": "Ссылка на панель", "Panel Status": "Состояние панели", "Server": "Сервер", "Online": "В сети", "Offline": "Не в сети", "Running": "Работает", "Active": "Активен", "Stopped": "Остановлен", "Configured": "Настроено", "Not configured": "Не настроено", "Usage": "Использование", "CPU LOAD": "ЗАГРУЗКА CPU", "RAM USED": "ИСПОЛЬЗОВАНИЕ RAM", "DISK USED": "ИСПОЛЬЗОВАНИЕ ДИСКА", "LIVE TELEMETRY": "ДАННЫЕ В РЕАЛЬНОМ ВРЕМЕНИ", "LIVE": "В СЕТИ", "CPU": "CPU", "RAM": "RAM", "Disk": "Диск", "Now": "Сейчас", "Updated:": "Обновлено:", "Close menu": "Закрыть меню", "Main Menu": "Главное меню", "System overview": "Обзор системы", "Settings and delivery": "Настройки и отправка", "Connection check": "Проверка соединения", "Login and activity": "Входы и действия", "Login management": "Управление входом", "Custom link": "Пользовательская ссылка", "Personal Themes": "Персональные темы", "Logout": "Выйти", "End session": "Завершить сеанс", "Open menu": "Открыть меню", "Menu": "Меню", "Choose theme": "Выбор темы", "Day": "Светлая", "Backup Information": "Информация о резервных копиях", "Data Usage": "Использование данных", "Recent Activity": "Последние действия", "Live Server Status": "Состояние сервера в реальном времени", "Live Server Resource Chart": "График ресурсов сервера в реальном времени", "Save Changes": "Сохранить изменения", "Private Administration": "Приватное управление", "Main administrator only": "Только главный администратор", "Secure Login →": "Безопасный вход →",
+    "Scheduler": "Планировщик", "Telegram Settings": "Настройки Telegram", "Send Test": "Отправить тест", "Backup Settings": "Настройки резервного копирования", "Send Test Message": "Отправить тестовое сообщение", "Sent using the current Chat ID and Topic.": "Отправляется с текущими Chat ID и Topic.",
+    "Login failed": "Неудачная попытка входа", "Admin login failed": "Неудачная попытка входа администратора", "Account settings changed": "Настройки учетной записи изменены", "Telegram settings changed": "Настройки Telegram изменены", "Telegram test succeeded": "Тест Telegram выполнен успешно", "Telegram test failed": "Тест Telegram завершился ошибкой", "Scheduler restarted": "Планировщик перезапущен", "Scheduler restart failed": "Не удалось перезапустить планировщик", "Scheduler stopped": "Планировщик остановлен", "Backup deleted: ": "Удалена резервная копия: ",
+    "Backup started": "Запущено резервное копирование", "Backup created successfully": "Резервная копия успешно создана", "Backup sent to Telegram successfully": "Резервная копия успешно отправлена в Telegram", "Backup created but Telegram send failed": "Резервная копия создана, но отправка в Telegram не удалась", "Backup failed": "Ошибка резервного копирования", "Panel logout": "Выход из панели", "Web panel started": "Веб-панель запущена", "Scheduler started": "Планировщик запущен",
+    "ورود موفق به پنل از ": "Успешный вход в панель с адреса ", "Language changed to ru": "Язык изменен на русский", "Language changed to en": "Язык изменен на английский", "Language changed to fa": "Язык изменен на персидский",
+    "پنل": "панель", "تعداد": "Количество", "پیام": "сообщение", "ارسال": "Отправка", "ساخته": "создана", "ساخت": "создание", "سلامت": "Состояние", "سرویس‌ها": "служб", "سرویس": "служба", "مصرف": "Использование", "دریافت": "Получение", "فعال‌کردن": "включения", "روشن/خاموش": "включения/выключения", "ذخیره شود": "сохранена", "همراه": "вместе", "می‌شود": "будет", "است": "является", "شد": "завершено", "می‌گیرد": "создается",
+    "Bot Token": "Токен бота", "Next Scheduled Backup": "Следующая запланированная резервная копия", "Backup Controls": "Управление резервным копированием", "Backup Health": "Состояние резервного копирования", "Disk Monitor": "Мониторинг диска", "Backup Activity": "Активность резервного копирования", "Recent Activity": "Последние действия", "Secure Glass UI": "Безопасный стеклянный интерфейс",
+    "Backup Control Center": "Центр резервного копирования", "durwinam": "durwinam", "idontPG backup": "idontPG backup",
+    "Aurora": "Аврора", "Ocean": "Океан", "Emerald": "Изумруд", "Sunset": "Закат", "Rose": "Роза", "Violet": "Фиолетовый", "Ruby": "Рубин", "Ultra Dark": "Ультра-темная", "Aurora Glass": "Стекло Аврора", "Midnight Purple": "Полуночный пурпур", "Cyber Neon": "Кибер-неон", "Ocean Glass": "Океанское стекло", "Ruby Night": "Рубиновая ночь",
+    "Scheduler Status": "Состояние планировщика", "Next Backup": "Следующая резервная копия", "Time Remaining": "Оставшееся время", "Panel Information": "Информация о панели", "Node Usage": "Использование Node",
+    "زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.": "Включайте или отключайте расписание, создавайте резервную копию вручную или добавляйте PG-Node в резервную копию.",
+    "همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.": "Все для управления резервными копиями, отправки в Telegram и автоматического расписания в одной быстрой панели.",
+    "تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.": "Разделение больших файлов для Telegram недоступно в ядре резервного копирования.",
+    "درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.": "Запрос недействителен или истек. Откройте страницу снова.",
+    "تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.": "Настройки успешно сохранены и применены ко всей веб-панели.",
+    "فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.": "Только латинские буквы, цифры и дефис; от 5 до 32 символов.",
+    "ذخیره تنظیمات ناموفق بود: ": "Не удалось сохранить настройки: ",
+    "قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.": "Проверьте соединение перед включением планировщика.",
+    "حذف Backup ناموفق بود: ": "Не удалось удалить резервную копию: ",
+    "یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.": "Тестовое сообщение будет отправлено с текущими настройками.",
+    "با Chat ID و Topic فعلی ارسال می‌شود.": "Отправляется с текущими Chat ID и Topic.",
+    "راه‌اندازی اولیه قبلاً انجام شده است.": "Первоначальная настройка уже выполнена.",
+    "ذخیره شد ولی شروع آن با خطا مواجه شد.": "Сохранено, но запуск завершился ошибкой.",
+    "تنظیمات از کد اصلی جدا ذخیره می‌شوند": "Настройки сохраняются отдельно от основного кода",
+    "هنوز لاگی برای این حساب ثبت نشده.": "Для этой учетной записи пока нет журналов.",
+    "دریافت مستقیم از PasarGuard Node": "Получение напрямую из PasarGuard Node",
+    "ارسال قسمت {i} ناموفق بود: {msg}": "Не удалось отправить часть {i}: {msg}",
+    "ورود موفق به پنل از {login_ip}": "Успешный вход в панель с адреса {login_ip}",
+    "ورود مدیر با موفقیت انجام شد": "Вход администратора выполнен успешно",
+    "با موفقیت ساخته و ارسال شد.": "Успешно создано и отправлено.",
+    "Backup ساخته شد: {archive}": "Создана резервная копия: {archive}",
+    "ارسال تست پیام به Telegram": "Отправить тестовое сообщение в Telegram",
+    "کنترل Backup و Scheduler": "Управление резервными копиями и планировщиком",
+    "قدیمی دیگری وجود ندارد.": "Других старых копий нет.", "ورود با موفقیت انجام شد": "Вход выполнен успешно",
+    "هنوز Backupای پیدا نشد.": "Резервных копий пока нет.", "هنوز Backup ساخته نشده": "Резервные копии пока не созданы", "هنوز فعالیتی ثبت نشده.": "Действий пока нет.",
+    "عنوان فعالیت‌های اخیر": "Заголовок последних действий", "تعداد فعالیت‌های اخیر": "Количество последних действий", "سلامت بکاپ و سرویس‌ها": "Состояние резервного копирования и служб",
+    "دانلود مستقیم Backup": "Прямая загрузка резервной копии", "درخواست نامعتبر است.": "Недействительный запрос.", "حذف شد: {requested}": "Удалено: {requested}",
+    "فقط برای مدیر اصلی": "Только для главного администратора", "Backup ناموفق بود": "Резервное копирование завершилось ошибкой", "ورود مدیر از {ip}": "Вход администратора с адреса {ip}",
+    "کنترل کامل Backup": "Полный контроль резервного копирования", "منابع سرور مجازی": "Ресурсы виртуального сервера", "قابل دریافت نیست": "Недоступно",
+    "ذخیره و شروع شد.": "Сохранено и запущено.", "بازگشت به مدیریت": "Вернуться к управлению", "وضعیت Scheduler": "Состояние планировщика",
+    "حجم کل Backupها": "Общий размер резервных копий", "آخرین فعالیت‌ها": "Последние действия", "مصرف واقعی Node": "Использование Node", "زمان باقی‌مانده": "Оставшееся время", "عنوان حجم مصرفی": "Заголовок использования",
+    "صفحه پیدا نشد.": "Страница не найдена.", "اطلاعات Backup": "Информация о резервных копиях", "تنظیمات Backup": "Настройки резервного копирования", "مشاهده لاگ‌ها": "Просмотр журналов", "ذخیره تغییرات": "Сохранить изменения",
+    "مدیریت Backup": "Управление резервными копиями", "پایش لحظه‌ای": "Мониторинг в реальном времени", "آخرین Backup": "Последняя резервная копия", "مدیریت IDONT": "Управление IDONT", "هفت روز اخیر": "Последние семь дней",
+    "تعداد Backup": "Количество резервных копий", "نمایش بخش‌ها": "Отображаемые разделы", "استفاده‌شده": "Использовано", "ناموفق بود.": "Завершилось ошибкой.", "اطلاعات پنل": "Информация о панели",
+    "Backup بعدی": "Следующая резервная копия", "Glow و حرکت": "Свечение и анимация", "عنوان بکاپ": "Заголовок резервных копий", "بدون Proxy": "Без прокси", "همین الان": "Только что", "دقیقه پیش": "минут назад", "لینک ورود": "Ссылка для входа", "فضای دیسک": "Дисковое пространство", "پیدا نشد.": "Не найдено.", "وضعیت پنل": "Состояние панели", "ساعت پیش": "часов назад", "متوقف شد": "Остановлено", "عرض Logo": "Ширина логотипа", "لینک پنل": "Ссылка на панель", "تنظیمات": "Настройки", "روز پیش": "дней назад", "نام پنل": "Название панели", "دانلود": "Скачать", "آفلاین": "Не в сети", "فعالیت": "Действие", "آنلاین": "В сети", "بازگشت": "Назад", "سرور": "Сервер", "ساعت": "часов", "بازه": "Интервал", "بکاپ": "Резервная копия", "آزاد": "Свободно", "بعدی": "Следующий", "دستی": "Ручной", "تست": "Тест", "حذف": "Удалить",
+    "Unknown": "Неизвестно", "Browser": "Браузер", "Android": "Android", "iOS": "iOS", "Windows": "Windows", "macOS": "macOS", "Linux": "Linux", "Chrome": "Chrome", "Edge": "Edge", "Firefox": "Firefox", "Safari": "Safari",
+}
+
+def _translate_ru(text):
+    if not text:
+        return text
+    for src, dst in sorted(RU_TRANSLATIONS.items(), key=lambda kv: len(kv[0]), reverse=True):
+        text = text.replace(src, dst)
+    # Translate the remaining Persian digits in the UI.
+    text = text.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    return text
+
 def _translate_en(text):
     if not text:
         return text
@@ -1689,12 +1809,12 @@ def _request_lang(handler):
     try:
         query = urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
         qlang = (query.get("lang", [""])[0] or "").lower()
-        if qlang in {"fa", "en"}:
+        if qlang in {"fa", "en", "ru"}:
             return qlang
         raw = handler.headers.get("Cookie", "")
         for part in raw.split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "idontpg_lang" and v.lower() in {"fa", "en"}:
+            if k == "idontpg_lang" and v.lower() in {"fa", "en", "ru"}:
                 return v.lower()
     except Exception:
         pass
@@ -1949,12 +2069,14 @@ def page(title, body, logged=True, notice="", kind="ok"):
     except Exception:
         lang = "fa"
 
-    picker = '''<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="زبان" title="زبان">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a></div></div>'''
+    picker = '''<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="Language" title="Language">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a><a href="/language?lang=ru">🇷🇺 <span>Русский</span></a></div></div>'''
     if 'class="top-actions"' in out and 'id="languageToggle"' not in out:
         out = out.replace('<div class="top-actions">', '<div class="top-actions">' + picker, 1)
+    elif not logged and 'id="languageToggle"' not in out:
+        out = out.replace('<body>', '<body>' + '<div class="public-language">' + picker + '</div>', 1)
 
     css = '''<style>
-.language-picker{position:relative;display:inline-flex}.language-toggle{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}.language-menu{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:100;box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu a{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}.language-menu a:hover{background:var(--glass2)}html[lang="en"]{direction:ltr}html[lang="en"] body{direction:ltr}html[lang="en"] .drawer{direction:ltr}html[lang="en"] .language-menu{text-align:left;right:0;left:auto}
+.public-language{position:fixed;top:18px;right:18px;z-index:999}.language-picker{position:relative;display:inline-flex}.language-toggle{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}.language-menu{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:100;box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu a{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}.language-menu a:hover{background:var(--glass2)}html[lang="en"]{direction:ltr}html[lang="en"] body{direction:ltr}html[lang="en"] .drawer{direction:ltr}html[lang="en"] .language-menu,html[lang="ru"] .language-menu{text-align:left;right:0;left:auto}html[lang="ru"]{direction:ltr}html[lang="ru"] body{direction:ltr}html[lang="ru"] .drawer{direction:ltr}html[lang="ru"] .language-menu{direction:ltr}
 </style>'''
     out = out.replace("</head>", css + "</head>", 1)
 
@@ -1964,6 +2086,9 @@ def page(title, body, logged=True, notice="", kind="ok"):
     if lang == "en":
         out = _translate_en(out)
         out = out.replace('<html lang="fa" dir="rtl">','<html lang="en" dir="ltr">',1)
+    elif lang == "ru":
+        out = _translate_ru(out)
+        out = out.replace('<html lang="fa" dir="rtl">','<html lang="ru" dir="ltr">',1)
     return out
 
 class Handler(BaseHTTPRequestHandler):
@@ -2081,7 +2206,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/language":
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             lang = (query.get("lang", ["fa"])[0] or "fa").lower()
-            if lang not in {"fa", "en"}:
+            if lang not in {"fa", "en", "ru"}:
                 lang = "fa"
             ref = self.headers.get("Referer", "")
             try:
@@ -2163,8 +2288,8 @@ class Handler(BaseHTTPRequestHandler):
         status = scheduler_status()
         if path == "/":
             ui_now = idont_load_ui_settings()
-            token = c.get("token") or "تنظیم نشده"
-            masked = (token[:8] + "••••••") if len(token) > 8 else token
+            token = c.get("token") or ""
+            masked = (token[:8] + "••••••") if len(token) > 8 else (token or "تنظیم نشده")
             status_class = "on" if status == "active" else "off"
             panel_info = get_panel_info()
             backup_info = get_backup_info()
@@ -2193,7 +2318,15 @@ class Handler(BaseHTTPRequestHandler):
 </div>'''
             rendered=page("Dashboard", body)
             sid=self.sid(); info=SESSIONS.get(sid,{}) if sid else {}; ln=info.pop("login_notice",None) if isinstance(info,dict) else None
-            if ln: rendered=rendered.replace("<body>","<body><script>window.idontLoginNotice="+json.dumps(ln,ensure_ascii=False)+";</script>")
+            if ln:
+                ln=dict(ln)
+                try:
+                    _lang=_request_lang(self)
+                    if _lang == "ru": ln["text"]=_translate_ru(str(ln.get("text", "")))
+                    elif _lang == "en": ln["text"]=_translate_en(str(ln.get("text", "")))
+                except Exception:
+                    pass
+                rendered=rendered.replace("<body>","<body><script>window.idontLoginNotice="+json.dumps(ln,ensure_ascii=False)+";</script>")
             self.send_html(rendered); return
 
         if path == "/backups":
@@ -2304,7 +2437,7 @@ class Handler(BaseHTTPRequestHandler):
                 login_ip=self.client_address[0] if self.client_address else "unknown"
                 login_time=_record_login(login_ip,canonical_username(c.get("username","admin")),"user",_login_device(self.headers.get("User-Agent","")))
                 c["last_login"]={"time":login_time,"ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c)
-                _record_activity(f"ورود موفق به پنل از {login_ip}","ok")
+                _record_activity(f"ورود موفق به پنل از {login_ip}","ok",canonical_username(c.get("username","admin")),login_ip,_login_device(self.headers.get("User-Agent","")),"login_success")
                 _notify_login_telegram(c,login_ip,canonical_username(c.get("username","admin")))
                 SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24), "role": "user", "username": canonical_username(c.get("username","admin")), "login_notice":{"text":"ورود با موفقیت انجام شد","ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}}
                 self.send_response(302)
@@ -2312,6 +2445,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Location", "/")
                 self.end_headers()
             else:
+                login_ip=self.client_address[0] if self.client_address else "unknown"
+                _record_activity("Login failed", "bad", data.get("username", "unknown"), login_ip, _login_device(self.headers.get("User-Agent", "")), "login_failed")
                 self.send_html(self.login_page("نام کاربری یا رمز عبور اشتباه است."), 401)
             return
 
@@ -2321,8 +2456,8 @@ class Handler(BaseHTTPRequestHandler):
                 if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
                 ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
                 if not ok:
-                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
-                ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
+                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; _record_activity("Admin login failed", "bad", data.get("admin_username", "unknown"), ip, _login_device(self.headers.get("User-Agent", "")), "admin_login_failed"); self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
+                ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok",canonical_username(c.get("username","admin")),ip,_login_device(self.headers.get("User-Agent","")),"admin_login_success"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
                 self.send_response(303); self.send_header("Set-Cookie",f"idontpg_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200"); self.send_header("Location",ADMIN_PATH); self.end_headers(); return
             if not self.require_csrf(data):
                 self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
@@ -2370,17 +2505,20 @@ class Handler(BaseHTTPRequestHandler):
                 salt, digest = hash_password(pw)
                 c.update({"password_salt": salt, "password_hash": digest})
             save_cfg(c)
+            _record_activity("Account settings changed", "ok", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "account_settings")
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
             save_cfg(c)
+            _record_activity("Telegram settings changed", "ok", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "telegram_settings")
             self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
 
         if path == "/test":
             ok, msg = telegram_test(c)
             kind = "ok" if ok else "bad"
+            _record_activity("Telegram test succeeded" if ok else "Telegram test failed", kind, canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "telegram_test_success" if ok else "telegram_test_failed")
             body = f'<div class="glass"><div class="notice {kind}">{status_dot("ok" if ok else "bad")} {"پیام تست با موفقیت ارسال شد." if ok else "ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
 
@@ -2394,11 +2532,12 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             p = scheduler_service("restart")
             ok = p.returncode == 0
+            _record_activity("Scheduler restarted" if ok else "Scheduler restart failed", "ok" if ok else "bad", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "scheduler_restart")
             self.send_html(page("Backup Settings", f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{"Scheduler ذخیره و شروع شد." if ok else "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد."}</div><a class="btn" href="/backup-settings">برگشت</a></div>')); return
 
         if path == "/stop":
             p = scheduler_service("stop")
-            _record_activity("Scheduler متوقف شد", "ok" if p.returncode == 0 else "bad")
+            _record_activity("Scheduler stopped", "ok" if p.returncode == 0 else "bad", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "scheduler_stop")
             self.redirect("/backup-settings"); return
 
         if path == "/backup-delete":
@@ -2407,7 +2546,7 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not target.is_file():
                 self.send_html(page("Backup",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
             try:
-                target.unlink(); _record_activity(f"Backup حذف شد: {requested}","ok"); self.redirect("/backups")
+                target.unlink(); _record_activity(f"Backup deleted: {requested}","ok",canonical_username(c.get("username","admin")),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"backup_delete"); self.redirect("/backups")
             except OSError as exc:
                 self.send_html(page("Backup",f'<div class="glass"><div class="notice bad">حذف Backup ناموفق بود: {html.escape(str(exc))}</div></div>'),500)
             return

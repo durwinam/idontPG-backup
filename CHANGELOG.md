@@ -43,6 +43,11 @@
 - Records the last Node connection error internally instead of silently swallowing every failure.
 
 
+### Russian Web Panel
+- Added a complete Russian interface for the Web Panel, including login, dashboard, Telegram, Backup, account, audit logs, and admin pages.
+- Added a working language selector with Persian, English, and Russian; the selected language is remembered per browser.
+- Kept all existing Web Panel routes and HTTP-only behavior unchanged.
+
 ### Audit Log update
 - Full panel audit trail: login, admin login, backups, Telegram, scheduler, account, delete, logout, language changes.
 - Up to 200 audit events stored separately from the dashboard 3-item activity feed.
