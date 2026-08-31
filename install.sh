@@ -19,8 +19,7 @@
 #      idont-backup update
 #
 #  Web Panel:
-#      https://SERVER_IP:5000 (when HTTPS setup succeeds)
-#      http://SERVER_IP:5000  (fallback)
+#      http://SERVER_IP:5000  (HTTP only)
 # ══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -59,6 +58,25 @@ LOCAL_PG_LOGO="${SCRIPT_DIR}/web/static/pasarguard-logo.png"
 DEVELOPER="durwinam"
 
 VERSION_TAG="${1:-}"
+
+
+# Return the server's public IPv4 address when available.
+# This is informational only for the HTTP-only installer; failure must never
+# stop installation. Prefer curl, then wget, then a local address fallback.
+get_public_ip() {
+    local ip=""
+    if command -v curl >/dev/null 2>&1; then
+        ip="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
+    if [ -z "${ip}" ] && command -v wget >/dev/null 2>&1; then
+        ip="$(wget -qO- -T 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
+    if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        printf '%s\n' "${ip}"
+    else
+        printf '%s\n' ""
+    fi
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Root check
