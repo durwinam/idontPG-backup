@@ -1,3 +1,5 @@
+[🇮🇷 README اصلی (فارسی)](README.md) | [🇬🇧 README English](README.en) | [🇷🇺 README Русский](README.ru)
+
 # 🛡️ idontPG-backup
 
 <div align="center">
@@ -59,7 +61,7 @@ idontPG-backup دارای یک پنل وب سبک و حرفه‌ای برای م
 - 🔎 نمایش وضعیت عملیات Backup
   
 ```bash
-Web panel_URL:https://IP-DOMAIN:5000  // or:http:IP-DOMAIN:5000
+Web panel_URL:http://IP-SERVER:5000
 ```
 
 🛠 نصب و اجرا

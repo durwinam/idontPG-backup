@@ -1,3 +1,5 @@
+[🇮🇷 README اصلی (فارسی)](README.md) | [🇬🇧 README English](README.en) | [🇷🇺 README Русский](README.ru)
+
 # 🛡️ idontPG-backup
 
 <div align="center">

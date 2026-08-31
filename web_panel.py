@@ -1396,14 +1396,49 @@ def _backup_history_records():
     return records
 
 
+def _gregorian_to_jalali(gy, gm, gd):
+    """Convert a Gregorian date to Jalali without external dependencies."""
+    g_d_m = (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+    gy2 = gy + 1 if gm > 2 else gy
+    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return jy, jm, jd
+
+def _jalali_date_label(value):
+    jy, jm, jd = _gregorian_to_jalali(value.year, value.month, value.day)
+    return f"{jy}/{jm:02d}/{jd:02d}"
+
 def get_backup_chart():
-    now=time.time(); records=_backup_history_records(); buckets=[]
-    for days in range(6,-1,-1):
-        start=now-(days+1)*86400; end=now-days*86400
-        total=sum(size for _,size,mtime in records if start<=mtime<end)
-        buckets.append((time.strftime('%m/%d',time.localtime(end-1)),total))
-    peak=max((v for _,v in buckets),default=0) or 1
-    return [(label,size,round(size/peak*100)) for label,size in buckets]
+    """Return seven fixed calendar-day buckets: today + previous six days."""
+    from datetime import datetime, timedelta
+    today = datetime.now().date()
+    records = _backup_history_records()
+    buckets = []
+    for days_ago in range(6, -1, -1):
+        target = today - timedelta(days=days_ago)
+        total = 0
+        for _, size, mtime in records:
+            try:
+                record_date = datetime.fromtimestamp(mtime).date()
+            except (OSError, OverflowError, ValueError):
+                continue
+            if record_date == target:
+                total += size
+        buckets.append((_jalali_date_label(target), total))
+    peak = max((v for _, v in buckets), default=0) or 1
+    return [(label, size, round(size / peak * 100)) for label, size in buckets]
 
 
 def csrf_token(sid):
@@ -1912,7 +1947,7 @@ class Handler(BaseHTTPRequestHandler):
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">{html.escape(ui_now.get("texts",{}).get("backup_title","اطلاعات Backup"))}</h3><p class="sub">Backup Information</p></div></div></div>
 <div class="meta"><div class="meta-row"><span>{ui_icon("backup", "meta-icon")} تعداد Backup</span><strong>{backup_info["count"]}</strong></div><div class="meta-row"><span>{ui_icon("disk", "meta-icon")} حجم کل Backupها</span><strong>{html.escape(backup_info["size"])}</strong></div><div class="meta-row"><span>{ui_icon("clock", "meta-icon")} آخرین Backup</span><strong title="{html.escape(backup_info["latest"])}">{html.escape(backup_info["latest_time"])}</strong></div></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px;min-width:0"><span class="panel-brand-icon card-icon" aria-label="PasarGuard"><img src="/static/pasarguard-logo.png" alt="PasarGuard" onerror="this.style.display='none';this.parentElement.classList.add('logo-fallback')"><span class="logo-fallback-text">PG</span></span><div style="min-width:0"><h3 class="title">اطلاعات پنل</h3><p class="sub">Panel Information</p></div></div><span class="status-wrap">{status_badge('آنلاین' if panel_info['status'] == 'Online' else 'آفلاین', 'ok' if panel_info['status'] == 'Online' else 'bad')}</span></div>
-<div class="meta"><div class="meta-row"><span class="meta-label">{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row has-status"><span class="meta-label">{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span class="meta-label">{ui_icon("traffic", "meta-icon")} مصرف واقعی Node</span><strong title="دریافت مستقیم از PasarGuard Node">{html.escape(panel_used)}</strong></div></div></article>
+<div class="meta"><div class="meta-row"><span class="meta-label">{ui_icon("link", "meta-icon")} لینک پنل</span><a href="{panel_url}" target="_blank" rel="noopener noreferrer" style="max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{panel_url}</a></div><div class="meta-row has-status"><span class="meta-label">{status_dot("ok")} وضعیت پنل</span><strong>{html.escape(panel_info['status'])}</strong></div><div class="meta-row"><span class="meta-label">{ui_icon("traffic", "meta-icon")} مصرف واقعی Node</span><strong title="دریافت مستقیم از PasarGuard Node">{html.escape(panel_used)}</strong></div></div><div class="actions" style="margin-top:14px"><a class="btn primary full" href="{panel_url}" target="_blank" rel="noopener noreferrer">{ui_icon("link", "inline-icon")} ورود به پنل</a></div></article>
 <article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("telegram", "card-icon")}<div><h3 class="title">بکاپ تلگرام</h3><p class="sub">Telegram Backup</p></div></div>{status_badge('فعال' if status == 'active' else 'متوقف', 'ok' if status == 'active' else 'bad')}</div>
 <div class="meta"><div class="meta-row"><span>Bot Token</span><span>{html.escape(masked)}</span></div><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>بازه</span><span>{html.escape(str(c.get('interval','24')))} ساعت</span></div></div>
 <div class="actions"><a class="btn primary" href="/telegram">{ui_icon("settings", "inline-icon")} تنظیمات Telegram</a><a class="btn" href="/test">{ui_icon("test", "inline-icon")} ارسال تست</a></div></article>
