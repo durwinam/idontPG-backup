@@ -464,41 +464,12 @@ LOGO = [
 LOGO_W = max(len(line) for line in LOGO)
 
 
-def _read_web_https_config():
-    """Read the installed Web Panel HTTPS state, if configured."""
-    conf = "/etc/idontPG-backup/https.conf"
-    data = {}
-    try:
-        with open(conf, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                data[key.strip()] = value.strip().strip('"').strip("'")
-    except Exception:
-        return {}
-    cert = data.get("CERT_FILE", "")
-    key = data.get("KEY_FILE", "")
-    identifier = data.get("IDENTIFIER", "")
-    if cert and key and identifier and os.path.isfile(cert) and os.path.isfile(key):
-        return {"identifier": identifier, "cert": cert, "key": key}
-    return {}
-
-
 def _get_web_panel_info():
-    """Return panel URL plus HTTPS certificate paths when HTTPS is active."""
+    """Return the Web Panel URL. The Web Panel is HTTP-only on port 5000."""
     configured = os.environ.get("IDONT_PG_WEB_URL", "").strip().rstrip("/")
-    https = _read_web_https_config()
-    if https:
-        return {
-            "url": configured or f"https://{https['identifier']}:5000",
-            "scheme": "https",
-            "cert": https["cert"],
-            "key": https["key"],
-        }
     if configured:
-        return {"url": configured, "scheme": "https" if configured.lower().startswith("https://") else "http", "cert": "", "key": ""}
+        configured = re.sub(r"^https://", "http://", configured, flags=re.IGNORECASE)
+        return {"url": configured, "scheme": "http", "cert": "", "key": ""}
 
     try:
         with urllib.request.urlopen("https://api.ipify.org", timeout=2) as r:
@@ -516,7 +487,6 @@ def _get_web_panel_info():
     except Exception:
         pass
     return {"url": "http://127.0.0.1:5000", "scheme": "http", "cert": "", "key": ""}
-
 
 def _get_web_panel_url():
     """Return a usable Web Panel URL without adding dependencies."""
@@ -3951,11 +3921,7 @@ def main():
         panel_info = _get_web_panel_info()
         panel_url = panel_info["url"]
         print(f"  {C.R2}🌐 Web Panel:{C.RESET} {C.WH}{panel_url}{C.RESET}")
-        if panel_info["scheme"] == "https":
-            print(f"  {C.R3}Certificate:{C.RESET} {C.WH}{panel_info['cert']}{C.RESET}")
-            print(f"  {C.R3}Private Key:{C.RESET}  {C.WH}{panel_info['key']}{C.RESET}")
-        else:
-            print(f"  {C.R3}HTTPS:{C.RESET} not configured — using HTTP")
+        print(f"  {C.R3}Protocol:{C.RESET} {C.WH}HTTP only{C.RESET}")
         print(f"  {C.R3}Open the link above to sign in to the Web Panel.{C.RESET}")
         print(f"  {C.R3}Press Ctrl+C to exit.{C.RESET}")
         print()
@@ -3984,11 +3950,7 @@ def main():
         elif choice == "7":
             panel_info = _get_web_panel_info()
             print(f"  {C.R2}🌐 Web Panel: {C.RESET}{panel_info['url']}")
-            if panel_info["scheme"] == "https":
-                print(f"  {C.R3}Certificate:{C.RESET} {panel_info['cert']}")
-                print(f"  {C.R3}Private Key:{C.RESET}  {panel_info['key']}")
-            else:
-                print(f"  {C.R3}HTTPS:{C.RESET} not configured — using HTTP")
+            print(f"  {C.R3}Protocol:{C.RESET} {C.WH}HTTP only{C.RESET}")
             print()
             pause_and_return()
         else:

@@ -333,267 +333,8 @@ else
 fi
 
         # ──────────────────────────────────────────────────────────────────────
-        # Optional HTTPS / Let's Encrypt setup
-        #
-        # HTTPS is deliberately non-fatal: if certificate issuance fails because
-        # DNS, firewall, port 80, or ACME validation is unavailable, installation
-        # continues and the panel remains available on HTTP :5000.
-        # ──────────────────────────────────────────────────────────────────────
-
-        HTTPS_STATE_DIR="/etc/idontPG-backup"
-        HTTPS_CONF="${HTTPS_STATE_DIR}/https.conf"
-        CERT_MANAGER="/usr/local/bin/idontpg-cert-manager"
-        CERTBOT_BIN="$(command -v certbot 2>/dev/null || true)"
-
-        mkdir -p "${HTTPS_STATE_DIR}"
-        chmod 700 "${HTTPS_STATE_DIR}"
-
-        detect_public_ip() {
-            local ip=""
-            ip="$(curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
-            if [[ ! "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-                ip="$(curl -4fsS --max-time 8 https://ifconfig.me/ip 2>/dev/null || true)"
-            fi
-            printf '%s' "${ip}"
-        }
-
-        certbot_version_ok_for_ip() {
-            local v major minor
-            v="$("${CERTBOT_BIN}" --version 2>/dev/null | sed -n 's/.*certbot \([0-9][0-9.]*\).*/\1/p')"
-            major="${v%%.*}"
-            minor="${v#*.}"; minor="${minor%%.*}"
-            [ -n "${major}" ] && [ -n "${minor}" ] && { [ "${major}" -gt 5 ] || { [ "${major}" -eq 5 ] && [ "${minor}" -ge 4 ]; }; }
-        }
-
-        ensure_ip_certbot() {
-            if command -v certbot >/dev/null 2>&1; then
-                CERTBOT_BIN="$(command -v certbot)"
-                if certbot_version_ok_for_ip; then return 0; fi
-                echo -e "${YELLOW}[!] Installed Certbot is too old for IP certificates; upgrading...${NC}"
-            fi
-            if command -v snap >/dev/null 2>&1; then
-                snap install certbot --classic >/dev/null 2>&1 || snap refresh certbot >/dev/null 2>&1 || true
-                CERTBOT_BIN="$(command -v certbot 2>/dev/null || true)"
-                if [ -n "${CERTBOT_BIN}" ] && certbot_version_ok_for_ip; then return 0; fi
-            fi
-            if command -v python3 >/dev/null 2>&1; then
-                python3 -m pip install --break-system-packages --upgrade 'certbot>=5.4,<6' >/dev/null 2>&1 || \
-                python3 -m pip install --upgrade 'certbot>=5.4,<6' >/dev/null 2>&1 || true
-                CERTBOT_BIN="$(command -v certbot 2>/dev/null || true)"
-                if [ -n "${CERTBOT_BIN}" ] && certbot_version_ok_for_ip; then return 0; fi
-            fi
-            return 1
-        }
-
-        install_certbot_if_needed() {
-            if command -v certbot >/dev/null 2>&1; then
-                CERTBOT_BIN="$(command -v certbot)"
-                return 0
-            fi
-            echo -e "${GREEN}[*] Installing Certbot for HTTPS...${NC}"
-            if command -v snap >/dev/null 2>&1; then
-                snap install certbot --classic >/dev/null 2>&1 || true
-                CERTBOT_BIN="$(command -v certbot 2>/dev/null || true)"
-            fi
-            if [ -z "${CERTBOT_BIN}" ] && command -v apt-get >/dev/null 2>&1; then
-                apt-get install -y certbot >/dev/null 2>&1 || true
-                CERTBOT_BIN="$(command -v certbot 2>/dev/null || true)"
-            fi
-            [ -n "${CERTBOT_BIN}" ]
-        }
-
-        write_https_conf() {
-            local mode="$1" identifier="$2" auto_ip="$3" cert="$4" key="$5"
-            cat > "${HTTPS_CONF}" <<EOF
-MODE=${mode}
-IDENTIFIER=${identifier}
-AUTO_IP=${auto_ip}
-CERT_FILE=${cert}
-KEY_FILE=${key}
-PORT=5000
-EOF
-            chmod 600 "${HTTPS_CONF}"
-        }
-
-        setup_https_certificate() {
-            local choice="" identifier="" current_ip="" resolved_ip="" cert_dir=""
-            echo
-            echo -e "${GREEN}════════ HTTPS Configuration ════════${NC}"
-            echo -e "  ${GREEN}1)${NC} Domain"
-            echo -e "  ${GREEN}2)${NC} Public IP"
-            echo -e "  ${GREEN}3)${NC} Skip HTTPS"
-            echo
-            read -r -p "Select [1-3]: " choice || choice="3"
-
-            case "${choice}" in
-                1)
-                    read -r -p "Enter domain: " identifier || identifier=""
-                    identifier="$(printf '%s' "${identifier}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-                    if [[ ! "${identifier}" =~ ^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]; then
-                        echo -e "${YELLOW}[!] Invalid domain. HTTPS skipped; installation continues.${NC}"
-                        return 0
-                    fi
-                    if ! install_certbot_if_needed; then
-                        echo -e "${YELLOW}[!] Certbot unavailable. HTTPS skipped; installation continues.${NC}"
-                        return 0
-                    fi
-                    current_ip="$(detect_public_ip)"
-                    resolved_ip="$(getent ahostsv4 "${identifier}" 2>/dev/null | awk 'NR==1{print $1}')"
-                    if [ -z "${resolved_ip}" ]; then
-                        echo -e "${YELLOW}[!] DNS lookup failed for ${identifier}. HTTPS skipped.${NC}"
-                        return 0
-                    fi
-                    echo -e "${GREEN}[+] DNS:${NC} ${identifier} -> ${resolved_ip}"
-                    if [ -n "${current_ip}" ] && [ "${resolved_ip}" != "${current_ip}" ]; then
-                        echo -e "${YELLOW}[!] DNS does not point to this server (${current_ip}). HTTPS skipped.${NC}"
-                        return 0
-                    fi
-                    echo -e "${GREEN}[*] Requesting Let's Encrypt certificate...${NC}"
-                    if "${CERTBOT_BIN}" certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email --preferred-challenges http -d "${identifier}" --keep-until-expiring >/tmp/idontpg-certbot.log 2>&1; then
-                        cert_dir="/etc/letsencrypt/live/${identifier}"
-                        if [ -s "${cert_dir}/fullchain.pem" ] && [ -s "${cert_dir}/privkey.pem" ]; then
-                            write_https_conf "domain" "${identifier}" "0" "${cert_dir}/fullchain.pem" "${cert_dir}/privkey.pem"
-                            echo -e "${GREEN}[✓] HTTPS certificate issued.${NC}"
-                            echo -e "${GREEN}[✓] HTTPS will be available at https://${identifier}:5000${NC}"
-                            return 0
-                        fi
-                    fi
-                    echo -e "${YELLOW}[!] Certificate issuance failed. See /tmp/idontpg-certbot.log${NC}"
-                    echo -e "${YELLOW}[!] Installation continues without HTTPS.${NC}"
-                    ;;
-                2)
-                    current_ip="$(detect_public_ip)"
-                    read -r -p "Detected Public IP: ${current_ip}. Use this IP? [Y/n]: " use_auto || use_auto="Y"
-                    use_auto="${use_auto:-Y}"
-                    if [[ "${use_auto}" =~ ^[Nn]$ ]]; then
-                        read -r -p "Enter public IP: " identifier || identifier=""
-                        auto_ip="0"
-                    else
-                        identifier="${current_ip}"
-                        auto_ip="1"
-                    fi
-                    if [[ ! "${identifier}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-                        echo -e "${YELLOW}[!] Invalid IPv4 address. HTTPS skipped; installation continues.${NC}"
-                        return 0
-                    fi
-                    if ! ensure_ip_certbot; then
-                        echo -e "${YELLOW}[!] Certbot 5.4+ unavailable. HTTPS skipped; installation continues.${NC}"
-                        return 0
-                    fi
-                    echo -e "${GREEN}[*] Requesting short-lived IP certificate...${NC}"
-                    if "${CERTBOT_BIN}" certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email --preferred-profile shortlived --preferred-challenges http --ip-address "${identifier}" >/tmp/idontpg-certbot.log 2>&1; then
-                        cert_dir="/etc/letsencrypt/live/${identifier}"
-                        if [ -s "${cert_dir}/fullchain.pem" ] && [ -s "${cert_dir}/privkey.pem" ]; then
-                            write_https_conf "ip" "${identifier}" "${auto_ip}" "${cert_dir}/fullchain.pem" "${cert_dir}/privkey.pem"
-                            echo -e "${GREEN}[✓] IP certificate issued.${NC}"
-                            echo -e "${GREEN}[✓] Daily IP/certificate check enabled.${NC}"
-                            echo -e "${GREEN}[✓] HTTPS will be available at https://${identifier}:5000${NC}"
-                            return 0
-                        fi
-                    fi
-                    echo -e "${YELLOW}[!] IP certificate issuance failed. See /tmp/idontpg-certbot.log${NC}"
-                    echo -e "${YELLOW}[!] Installation continues without HTTPS.${NC}"
-                    ;;
-                *)
-                    echo -e "${YELLOW}[!] HTTPS skipped.${NC}"
-                    ;;
-            esac
-        }
-
-        # HTTPS is configured before the service starts, so the first launch can
-        # immediately use the certificate when issuance succeeded.
-        setup_https_certificate || true
-
-        cat > "${CERT_MANAGER}" <<'EOF'
-#!/bin/bash
-set +e
-STATE_DIR="/etc/idontPG-backup"
-CONF="${STATE_DIR}/https.conf"
-CERTBOT="$(command -v certbot 2>/dev/null || true)"
-LOG="/var/log/idontpg-cert-manager.log"
-mkdir -p "${STATE_DIR}"
-exec >>"${LOG}" 2>&1
-
-echo "[$(date -Is)] certificate check started"
-[ -s "${CONF}" ] || { echo "[$(date -Is)] HTTPS not configured"; exit 0; }
-[ -n "${CERTBOT}" ] || { echo "[$(date -Is)] certbot not found"; exit 0; }
-
-# shellcheck disable=SC1090
-source "${CONF}"
-
-public_ip() {
-    curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || \
-    curl -4fsS --max-time 8 https://ifconfig.me/ip 2>/dev/null || true
-}
-
-write_conf() {
-    local id="$1"
-    local dir="/etc/letsencrypt/live/${id}"
-    cat >"${CONF}" <<EOC
-MODE=ip
-IDENTIFIER=${id}
-AUTO_IP=1
-CERT_FILE=${dir}/fullchain.pem
-KEY_FILE=${dir}/privkey.pem
-PORT=5000
-EOC
-    chmod 600 "${CONF}"
-}
-
-if [ "${MODE}" = "ip" ] && [ "${AUTO_IP}" = "1" ]; then
-    NOW="$(public_ip)"
-    if [[ "${NOW}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && [ "${NOW}" != "${IDENTIFIER}" ]; then
-        echo "[$(date -Is)] public IP changed: ${IDENTIFIER} -> ${NOW}"
-        if "${CERTBOT}" certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email --preferred-profile shortlived --preferred-challenges http --ip-address "${NOW}"; then
-            if [ -s "/etc/letsencrypt/live/${NOW}/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/${NOW}/privkey.pem" ]; then
-                write_conf "${NOW}"
-                systemctl restart idontpg-backup-web.service >/dev/null 2>&1 || true
-                echo "[$(date -Is)] new IP certificate installed"
-                exit 0
-            fi
-        fi
-        echo "[$(date -Is)] new IP certificate failed; keeping previous configuration"
-    fi
-fi
-
-# Daily renewal check. For IP certificates Certbot uses the shortlived profile.
-if [ "${MODE}" = "ip" ]; then
-    "${CERTBOT}" renew --non-interactive --preferred-profile shortlived --deploy-hook 'systemctl restart idontpg-backup-web.service' || true
-else
-    "${CERTBOT}" renew --non-interactive --deploy-hook 'systemctl restart idontpg-backup-web.service' || true
-fi
-
-echo "[$(date -Is)] certificate check finished"
-EOF
-        chmod 700 "${CERT_MANAGER}"
-
-        cat > /etc/systemd/system/idontpg-cert-renew.service <<EOF
-[Unit]
-Description=idontPG-backup HTTPS certificate check
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=${CERT_MANAGER}
-User=root
-EOF
-        chmod 600 /etc/systemd/system/idontpg-cert-renew.service
-
-        cat > /etc/systemd/system/idontpg-cert-renew.timer <<'EOF'
-[Unit]
-Description=Daily idontPG-backup HTTPS certificate check
-
-[Timer]
-OnBootSec=10min
-OnUnitActiveSec=24h
-RandomizedDelaySec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-        chmod 600 /etc/systemd/system/idontpg-cert-renew.timer
+        # Web Panel is HTTP-only on port 5000.
+        # No certificate, DNS validation, Certbot, or renewal task is required.
 
         # ──────────────────────────────────────────────────────────────────────
         # Web Panel service
@@ -648,7 +389,13 @@ EOF
         echo -e "${GREEN}[*] Reloading systemd...${NC}"
 
         systemctl daemon-reload
-        systemctl enable --now idontpg-cert-renew.timer >/dev/null 2>&1 || true
+
+        # Remove legacy HTTPS/certificate manager units from older installations.
+        systemctl disable --now idontpg-cert-renew.timer >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/idontpg-cert-renew.timer \
+              /etc/systemd/system/idontpg-cert-renew.service \
+              /usr/local/bin/idontpg-cert-manager
+        systemctl daemon-reload
 
         # ──────────────────────────────────────────────────────────────────────
         # IMPORTANT:
@@ -677,18 +424,10 @@ EOF
         fi
 
         echo
-        if [ -s "${HTTPS_CONF}" ] && grep -q '^CERT_FILE=' "${HTTPS_CONF}" && [ -s "$(sed -n 's/^CERT_FILE=//p' "${HTTPS_CONF}")" ]; then
-            HTTPS_ID="$(sed -n 's/^IDENTIFIER=//p' "${HTTPS_CONF}")"
-            CERT_FILE_PATH="$(sed -n 's/^CERT_FILE=//p' "${HTTPS_CONF}")"
-            KEY_FILE_PATH="$(sed -n 's/^KEY_FILE=//p' "${HTTPS_CONF}")"
-            echo -e "${GREEN}[+] Web Panel (HTTPS):${NC} https://${HTTPS_ID}:5000"
-            echo -e "    ${GREEN}Certificate:${NC} ${CERT_FILE_PATH}"
-            echo -e "    ${GREEN}Private Key:${NC}  ${KEY_FILE_PATH}"
-        else
-            SERVER_IP="$(get_public_ip)"
-            [ -z "${SERVER_IP}" ] && SERVER_IP="SERVER_IP"
-            echo -e "${GREEN}[+] Web Panel (HTTP):${NC} http://${SERVER_IP}:5000"
-        fi
+        SERVER_IP="$(get_public_ip)"
+        [ -z "${SERVER_IP}" ] && SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+        [ -z "${SERVER_IP}" ] && SERVER_IP="127.0.0.1"
+        echo -e "${GREEN}[+] Web Panel (HTTP):${NC} http://${SERVER_IP}:5000"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Final verification
@@ -736,19 +475,10 @@ echo -e "  Update:"
 echo -e "    ${GREEN}idont-backup update${NC}"
 echo
 echo -e "  Web Panel:"
-if [ -s "/etc/idontPG-backup/https.conf" ] && grep -q '^CERT_FILE=' /etc/idontPG-backup/https.conf; then
-    HTTPS_ID="$(sed -n 's/^IDENTIFIER=//p' /etc/idontPG-backup/https.conf)"
-    CERT_FILE_PATH="$(sed -n 's/^CERT_FILE=//p' /etc/idontPG-backup/https.conf)"
-    KEY_FILE_PATH="$(sed -n 's/^KEY_FILE=//p' /etc/idontPG-backup/https.conf)"
-    echo -e "    ${GREEN}https://${HTTPS_ID}:5000${NC}"
-    echo -e "    ${GREEN}Certificate:${NC} ${CERT_FILE_PATH}"
-    echo -e "    ${GREEN}Private Key:${NC}  ${KEY_FILE_PATH}"
-else
-    SERVER_IP="$(get_public_ip)"
-    [ -z "${SERVER_IP}" ] && SERVER_IP="SERVER_IP"
-    echo -e "    ${GREEN}http://${SERVER_IP}:5000${NC}"
-fi
-echo
+SERVER_IP="$(get_public_ip)"
+[ -z "${SERVER_IP}" ] && SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -z "${SERVER_IP}" ] && SERVER_IP="127.0.0.1"
+echo -e "    ${GREEN}http://${SERVER_IP}:5000${NC}"
 echo -e "  Web Scheduler:"
 echo -e "    ${GREEN}systemctl status idontpg-backup-web-scheduler${NC}"
 echo
