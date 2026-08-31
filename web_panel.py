@@ -2270,6 +2270,91 @@ class Handler(BaseHTTPRequestHandler):
             body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>تاریخچه کامل فعالیت‌های پنل</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز فعالیتی ثبت نشده است.</div>')+'</div></div>'
             self.send_html(page("Logs",body)); return
 
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
+        c = load_cfg()
+        data = self.form()
+
+        if path == "/setup":
+            # First-run setup is one-time only. Once a password exists, this route
+            # can never be used to replace the admin credentials.
+            if c.get("password_hash"):
+                self.send_html(page("Setup", '<div class="glass"><div class="notice bad">راه‌اندازی اولیه قبلاً انجام شده است.</div><a class="btn" href="/login">ورود به پنل</a></div>', False), 403); return
+            username = data.get("username", "").strip()
+            pw = data.get("password", "")
+            confirm = data.get("password_confirm", "")
+            if not valid_username(username):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if not valid_password(pw):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if pw != confirm:
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">تکرار رمز عبور با رمز جدید یکسان نیست.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            salt, digest = hash_password(pw)
+            c.update({"username": username, "password_salt": salt, "password_hash": digest})
+            save_cfg(c)
+            self.redirect("/login"); return
+
+        if path == "/login":
+            username_ok = hmac.compare_digest(data.get("username", "").strip(), canonical_username(c.get("username", "admin")))
+            if username_ok and check_password(data.get("password", ""), c):
+                sid = secrets.token_urlsafe(32)
+                login_ip=self.client_address[0] if self.client_address else "unknown"
+                login_time=_record_login(login_ip,canonical_username(c.get("username","admin")),"user",_login_device(self.headers.get("User-Agent","")))
+                c["last_login"]={"time":login_time,"ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c)
+                _record_activity(f"ورود موفق به پنل از {login_ip}","ok")
+                _notify_login_telegram(c,login_ip,canonical_username(c.get("username","admin")))
+                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24), "role": "user", "username": canonical_username(c.get("username","admin")), "login_notice":{"text":"ورود با موفقیت انجام شد","ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}}
+                self.send_response(302)
+                self.send_header("Set-Cookie", "idontpg_session=" + sid + "; HttpOnly; SameSite=Strict; Path=/")
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_html(self.login_page("نام کاربری یا رمز عبور اشتباه است."), 401)
+            return
+
+        if path == ADMIN_PATH:
+            if not self.admin_logged():
+                ip=self.client_address[0] if self.client_address else "unknown"; now=time.time(); recent=[x for x in ADMIN_LOGIN_ATTEMPTS.get(ip,[]) if now-x<900]
+                if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
+                ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
+                if not ok:
+                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
+                ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
+                self.send_response(303); self.send_header("Set-Cookie",f"idontpg_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200"); self.send_header("Location",ADMIN_PATH); self.end_headers(); return
+            if not self.require_csrf(data):
+                self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
+            try:
+                ui=idont_apply_ui_settings(data)
+                t=ui.setdefault("theme",{})
+                t["content_width"]=_ui_int(data.get("content_width",t.get("content_width",1180)),1180,860,1500)
+                t["card_gap"]=_ui_int(data.get("card_gap",t.get("card_gap",16)),16,8,32)
+                t["shadow_strength"]=_ui_float(data.get("shadow_strength",t.get("shadow_strength",.5)),.5,0,1)
+                ui["brand_subtitle"]=str(data.get("brand_subtitle",ui.get("brand_subtitle","Backup Control Center · durwinam")))[:120]
+                idont_save_ui_settings(ui)
+                self.send_html(page("Admin",'<div class="glass"><div class="notice ok">تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.</div><a class="btn primary" href="'+ADMIN_PATH+'">بازگشت به مدیریت</a></div>'))
+            except Exception as exc:
+                self.send_html(page("Admin",f'<div class="glass"><div class="notice bad">ذخیره تنظیمات ناموفق بود: {html.escape(str(exc))}</div><a class="btn" href="{ADMIN_PATH}">تلاش دوباره</a></div>'),500)
+            return
+
+        if not self.logged():
+            self.redirect("/login"); return
+        if not self.require_csrf(data):
+            self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
+
+        if path == "/logs":
+            session_info = SESSIONS.get(self.sid(), {})
+            current_username = canonical_username(session_info.get("username") or c.get("username", "admin"))
+            current_role = str(session_info.get("role") or "user")
+            logs = [x for x in get_login_logs() if canonical_username(x.get("username", "admin")) == current_username and str(x.get("role", "user")) == current_role]
+            rows=[]
+            for x in logs[:50]:
+                ts=float(x.get("time",0) or 0); rows.append('<div class="meta-row"><span>🔐 '+html.escape(current_username)+' · '+html.escape(current_role)+'</span><strong>'+html.escape(str(x.get("ip","unknown")))+' · '+html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))+'</strong></div>')
+            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
+            self.send_html(page("Logs",body)); return
+
         if path == "/account":
             username = data.get("username", "").strip()
             pw = data.get("password", "")
@@ -2285,23 +2370,17 @@ class Handler(BaseHTTPRequestHandler):
                 salt, digest = hash_password(pw)
                 c.update({"password_salt": salt, "password_hash": digest})
             save_cfg(c)
-            si=SESSIONS.get(self.sid(), {})
-            _record_activity("Account settings changed","ok",si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"account_settings")
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
             save_cfg(c)
-            si=SESSIONS.get(self.sid(), {})
-            _record_activity("Telegram settings changed","ok",si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"telegram_settings")
             self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
 
         if path == "/test":
             ok, msg = telegram_test(c)
             kind = "ok" if ok else "bad"
-            si=SESSIONS.get(self.sid(), {})
-            _record_activity("Telegram test succeeded" if ok else "Telegram test failed",kind,si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"telegram_test_success" if ok else "telegram_test_failed")
             body = f'<div class="glass"><div class="notice {kind}">{status_dot("ok" if ok else "bad")} {"پیام تست با موفقیت ارسال شد." if ok else "ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
 
@@ -2315,14 +2394,11 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             p = scheduler_service("restart")
             ok = p.returncode == 0
-            si=SESSIONS.get(self.sid(), {})
-            _record_activity("Scheduler restarted" if ok else "Scheduler restart failed","ok" if ok else "bad",si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"scheduler_restart")
             self.send_html(page("Backup Settings", f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{"Scheduler ذخیره و شروع شد." if ok else "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد."}</div><a class="btn" href="/backup-settings">برگشت</a></div>')); return
 
         if path == "/stop":
             p = scheduler_service("stop")
-            si=SESSIONS.get(self.sid(), {})
-            _record_activity("Scheduler stopped","ok" if p.returncode == 0 else "bad",si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"scheduler_stop")
+            _record_activity("Scheduler متوقف شد", "ok" if p.returncode == 0 else "bad")
             self.redirect("/backup-settings"); return
 
         if path == "/backup-delete":
@@ -2331,19 +2407,14 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not target.is_file():
                 self.send_html(page("Backup",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
             try:
-                target.unlink()
-                si=SESSIONS.get(self.sid(), {})
-                _record_activity(f"Backup deleted: {requested}","ok",si.get("username","system"),self.client_address[0] if self.client_address else "unknown",_login_device(self.headers.get("User-Agent","")),"backup_delete")
-                self.redirect("/backups")
+                target.unlink(); _record_activity(f"Backup حذف شد: {requested}","ok"); self.redirect("/backups")
             except OSError as exc:
                 self.send_html(page("Backup",f'<div class="glass"><div class="notice bad">حذف Backup ناموفق بود: {html.escape(str(exc))}</div></div>'),500)
             return
 
         if path == "/backup":
             try:
-                si=SESSIONS.get(self.sid(), {})
-                audit_ctx={"username":si.get("username","system"),"ip":self.client_address[0] if self.client_address else "unknown","device":_login_device(self.headers.get("User-Agent",""))}
-                ok, msg = make_backup(send=True, audit_context=audit_ctx)
+                ok, msg = make_backup(send=True)
             except Exception as e:
                 ok, msg = False, str(e)
             body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{status_dot("ok" if ok else "bad")} {("Backup با موفقیت ساخته و ارسال شد." if ok else "Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
