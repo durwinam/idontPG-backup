@@ -74,6 +74,8 @@ import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
+VERSION = "5.6.4"
+
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
 #   R1  bright red  — active labels, prompts, highlights
@@ -491,7 +493,7 @@ def print_header(title=""):
     print()
     for line in LOGO:
         print(center(C.R1 + C.BOLD + line + C.RESET, LOGO_W))
-    sub = C.R3 + C.BOLD + "B A C K U P   U T I L I T Y   v 5 . 5 . 3   -   d u r w i n a m" + C.RESET
+    sub = C.R3 + C.BOLD + f"B A C K U P   U T I L I T Y   v {VERSION.replace('.', ' . ')}   -   d u r w i n a m" + C.RESET
     print(center(sub, 57))
     print()
     print(hline())
@@ -3144,11 +3146,14 @@ def run_scheduled_backup_loop(bot_token, admin_id, interval_h, include_node, pro
                 success, details = send_telegram_backup_archive(zip_path, cap, bot_token, admin_id, proxy)
                 if success: print_success("Backup sent to Telegram!")
                 else:       print_error(f"Send failed: {details}")
-                try:
-                    os.remove(zip_path)
-                    print_info("Local archive removed.")
-                except Exception:
-                    pass
+                # Keep the archive locally so the Web Panel can expose
+                # the latest Telegram backup with direct download/delete actions.
+                if success:
+                    try:
+                        os.chmod(zip_path, 0o600)
+                    except OSError:
+                        pass
+                    print_info("Local archive retained for Web Panel management.")
             else:
                 print_error("Backup failed — skipping upload.")
 

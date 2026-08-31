@@ -678,9 +678,16 @@ EOF
 
         echo
         if [ -s "${HTTPS_CONF}" ] && grep -q '^CERT_FILE=' "${HTTPS_CONF}" && [ -s "$(sed -n 's/^CERT_FILE=//p' "${HTTPS_CONF}")" ]; then
-            echo -e "${GREEN}[+] Web Panel:${NC} https://$(sed -n 's/^IDENTIFIER=//p' "${HTTPS_CONF}"):5000"
+            HTTPS_ID="$(sed -n 's/^IDENTIFIER=//p' "${HTTPS_CONF}")"
+            CERT_FILE_PATH="$(sed -n 's/^CERT_FILE=//p' "${HTTPS_CONF}")"
+            KEY_FILE_PATH="$(sed -n 's/^KEY_FILE=//p' "${HTTPS_CONF}")"
+            echo -e "${GREEN}[+] Web Panel (HTTPS):${NC} https://${HTTPS_ID}:5000"
+            echo -e "    ${GREEN}Certificate:${NC} ${CERT_FILE_PATH}"
+            echo -e "    ${GREEN}Private Key:${NC}  ${KEY_FILE_PATH}"
         else
-            echo -e "${GREEN}[+] Web Panel:${NC} http://SERVER_IP:5000"
+            SERVER_IP="$(get_public_ip)"
+            [ -z "${SERVER_IP}" ] && SERVER_IP="SERVER_IP"
+            echo -e "${GREEN}[+] Web Panel (HTTP):${NC} http://${SERVER_IP}:5000"
         fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -731,9 +738,15 @@ echo
 echo -e "  Web Panel:"
 if [ -s "/etc/idontPG-backup/https.conf" ] && grep -q '^CERT_FILE=' /etc/idontPG-backup/https.conf; then
     HTTPS_ID="$(sed -n 's/^IDENTIFIER=//p' /etc/idontPG-backup/https.conf)"
+    CERT_FILE_PATH="$(sed -n 's/^CERT_FILE=//p' /etc/idontPG-backup/https.conf)"
+    KEY_FILE_PATH="$(sed -n 's/^KEY_FILE=//p' /etc/idontPG-backup/https.conf)"
     echo -e "    ${GREEN}https://${HTTPS_ID}:5000${NC}"
+    echo -e "    ${GREEN}Certificate:${NC} ${CERT_FILE_PATH}"
+    echo -e "    ${GREEN}Private Key:${NC}  ${KEY_FILE_PATH}"
 else
-    echo -e "    ${GREEN}http://SERVER_IP:5000${NC}"
+    SERVER_IP="$(get_public_ip)"
+    [ -z "${SERVER_IP}" ] && SERVER_IP="SERVER_IP"
+    echo -e "    ${GREEN}http://${SERVER_IP}:5000${NC}"
 fi
 echo
 echo -e "  Web Scheduler:"
