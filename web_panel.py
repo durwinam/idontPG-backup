@@ -16,7 +16,6 @@ import os
 import re
 import socket
 import secrets
-import ssl
 import subprocess
 import time
 import urllib.parse
@@ -117,39 +116,6 @@ def save_cfg(c):
     tmp.write_text(json.dumps(c, indent=2, ensure_ascii=False), encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(CONFIG)
-
-
-HTTPS_CONF = STATE_DIR / "https.conf"
-
-def load_https_settings():
-    data = {}
-    try:
-        if HTTPS_CONF.exists():
-            for line in HTTPS_CONF.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                data[k.strip()] = v.strip().strip('"').strip("'")
-    except Exception:
-        return {}
-    return data
-
-def make_https_server(server):
-    cfg = load_https_settings()
-    cert = cfg.get("CERT_FILE", "")
-    key = cfg.get("KEY_FILE", "")
-    if not cert or not key or not os.path.isfile(cert) or not os.path.isfile(key):
-        return False
-    try:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(certfile=cert, keyfile=key)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-        return True
-    except Exception as exc:
-        print(f"[!] HTTPS certificate could not be loaded: {exc}; falling back to HTTP", flush=True)
-        return False
 
 
 def hash_password(password, salt=None):
@@ -2183,10 +2149,7 @@ def main():
     if args.worker:
         worker(); return
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    if make_https_server(server):
-        print(f"{APP} Web Panel v{VERSION} listening on https://{HOST}:{PORT}", flush=True)
-    else:
-        print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}", flush=True)
+    print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}", flush=True)
     server.serve_forever()
 
 
