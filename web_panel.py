@@ -263,21 +263,27 @@ def send_archive(core, archive, c, caption):
         pass
 
 
-def make_backup(send=True):
+def make_backup(send=True, audit=None):
     c = load_cfg()
     core = load_core()
+    if audit is None:
+        audit = (canonical_username(c.get("username", "admin")), "scheduler/local", "Scheduler")
+    username, ip, device = audit
+    _record_activity("Backup started", "info", "backup_start", username, ip, device)
     try:
         archive = core.create_backup(bool(c.get("node", False)))
         if archive and os.path.exists(archive):
             _record_backup_created(archive)
+            _record_activity(f"Backup file created: {Path(archive).name}", "ok", "backup_success", username, ip, device)
         if not send:
-            _record_activity("Backup دستی ساخته شد", "ok")
+            _record_activity("Manual Backup created successfully", "ok", "backup_success", username, ip, device)
             return True, f"Backup ساخته شد: {archive}"
         ok, msg = send_archive(core, archive, c, f"idontPG-backup · {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        _record_activity("Backup و ارسال به Telegram موفق بود" if ok else "Backup ساخته شد ولی ارسال Telegram ناموفق بود", "ok" if ok else "bad")
+        _record_activity("Backup sent to Telegram successfully" if ok else f"Backup Telegram delivery failed: {msg}", "ok" if ok else "bad", "telegram_success" if ok else "telegram_failed", username, ip, device)
+        _record_activity("Backup completed successfully" if ok else "Backup completed with Telegram delivery failure", "ok" if ok else "bad", "backup_success" if ok else "backup_failed", username, ip, device)
         return ok, msg
     except Exception as exc:
-        _record_activity("Backup ناموفق بود", "bad")
+        _record_activity(f"Backup failed: {exc}", "bad", "backup_failed", username, ip, device)
         raise
 
 
@@ -467,23 +473,59 @@ BACKUP_HISTORY_FILES = (
     Path("/var/lib/idontPG-backup/backup_history.json"),
 )
 
-def _record_activity(message, kind="ok"):
-    """Keep a tiny rolling activity history for the dashboard."""
+def _record_activity(message, kind="ok", event="activity", username="", ip="", device=""):
+    """Persist a rolling audit log for this server/panel.
+
+    Dashboard keeps showing only the latest three activities, while the Logs
+    page can inspect the larger audit trail.  Entries are intentionally tied
+    to the current local panel account when available.
+    """
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         items = []
         if ACTIVITY_FILE.is_file():
             try:
-                items = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
-                if not isinstance(items, list): items = []
+                raw = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, list): items = raw
             except Exception:
                 items = []
-        items.insert(0, {"time": time.time(), "message": str(message), "kind": str(kind)})
-        ACTIVITY_FILE.write_text(json.dumps(items[:3], ensure_ascii=False), encoding="utf-8")
+        items.insert(0, {
+            "time": time.time(),
+            "message": str(message),
+            "kind": str(kind),
+            "event": str(event),
+            "username": str(username or ""),
+            "ip": str(ip or ""),
+            "device": str(device or ""),
+        })
+        ACTIVITY_FILE.write_text(json.dumps(items[:200], ensure_ascii=False), encoding="utf-8")
         try: ACTIVITY_FILE.chmod(0o600)
         except OSError: pass
     except Exception:
         pass
+
+def _request_context(handler):
+    """Return audit context without storing cookies/tokens/passwords."""
+    try:
+        sid = handler.sid()
+        info = SESSIONS.get(sid, {}) if sid else {}
+        c = load_cfg()
+        return (
+            canonical_username(info.get("username") or c.get("username", "admin")),
+            str(handler.client_address[0] if handler.client_address else "unknown"),
+            _login_device(handler.headers.get("User-Agent", "")),
+        )
+    except Exception:
+        return ("admin", "unknown", "Unknown · Browser")
+
+def get_all_activities():
+    try:
+        if ACTIVITY_FILE.is_file():
+            raw = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, list) else []
+    except Exception:
+        pass
+    return []
 
 LOGIN_LOG_FILE = STATE_DIR / "login_logs.json"
 
@@ -525,13 +567,15 @@ def get_login_logs():
     return []
 
 def _notify_login_telegram(c, ip, username):
-    if not c.get("token") or not c.get("chat"): return
+    if not c.get("token") or not c.get("chat"):
+        return False, "Telegram is not configured"
     try:
-        params={"chat_id":c["chat"],"text":f"🔐 idontPG-backup\nورود موفق به پنل\n👤 {username}\n🌐 IP: {ip}\n🕐 {time.strftime('%Y-%m-%d %H:%M:%S')}"}
+        params={"chat_id":c["chat"],"text":f"🔐 idontPG-backup\nSuccessful panel login\n👤 {username}\n🌐 IP: {ip}\n🕐 {time.strftime('%Y-%m-%d %H:%M:%S')}"}
         topic=normalize_topic_id(c.get("topic",""))
         if topic: params["message_thread_id"]=int(topic)
-        telegram_request(c["token"],"sendMessage",params,c.get("proxy") or None,20)
-    except Exception: pass
+        return telegram_request(c["token"],"sendMessage",params,c.get("proxy") or None,20)
+    except Exception as exc:
+        return False, str(exc)
 
 def get_recent_activities():
     """Return up to five recent dashboard activities."""
@@ -1712,7 +1756,7 @@ def _request_lang(handler):
 def page(title, body, logged=True, notice="", kind="ok"):
     nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/logs">{ui_icon("activity", "drawer-icon")}<span><strong>لاگ‌ها</strong><small>ورود و فعالیت</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a>{''.join(f'<a class="drawer-link" href="{html.escape(b.get("url",""), quote=True)}" target="_blank" rel="noopener noreferrer">{ui_icon("link", "drawer-icon")}<span><strong>{html.escape(b.get("icon","🔗"))} {html.escape(b.get("name","دکمه"))}</strong><small>لینک سفارشی</small></span></a>' for b in idont_load_ui_settings().get("buttons",[]) if _safe_button_url(b.get("url","")))}<div class="drawer-theme-section"><div class="drawer-theme-title">🎨 تم‌های شخصی</div><div class="drawer-theme-grid"><button type="button" class="drawer-theme-choice" data-theme-choice="aurora">🌌 Aurora</button><button type="button" class="drawer-theme-choice" data-theme-choice="ocean">🌊 Ocean</button><button type="button" class="drawer-theme-choice" data-theme-choice="emerald">💚 Emerald</button><button type="button" class="drawer-theme-choice" data-theme-choice="sunset">🌅 Sunset</button><button type="button" class="drawer-theme-choice" data-theme-choice="rose">🌹 Rose</button><button type="button" class="drawer-theme-choice" data-theme-choice="violet">💜 Violet</button><button type="button" class="drawer-theme-choice" data-theme-choice="ruby">❤️ Ruby</button></div></div><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
     notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
-    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="idontPG backup"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/static/logo.png"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}.language-picker{{position:relative}}.language-toggle{{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}}.language-menu{{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:80;box-shadow:0 18px 50px rgba(0,0,0,.35)}}.language-menu a{{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}}.language-menu a:hover{{background:var(--glass2)}}html[lang="en"]{{direction:ltr}}html[lang="en"] body{{direction:ltr}}html[lang="en"] .language-menu{{right:0;left:auto}}html[lang="en"] .drawer{{direction:ltr}}html[lang="en"] .meta-row{{direction:ltr}}
+    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="idontPG backup"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/static/logo.png"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}.language-picker{{position:relative}}.language-toggle{{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}}.language-menu{{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:80;box-shadow:0 18px 50px rgba(0,0,0,.35)}}.language-menu a{{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}}.language-menu a:hover{{background:var(--glass2)}}html[lang="en"]{{direction:ltr}}html[lang="en"] body{{direction:ltr}}html[lang="en"] .language-menu{{right:0;left:auto}}html[lang="en"] .drawer{{direction:ltr}}html[lang="en"] .meta-row{{direction:ltr}}html[lang="en"] .language-menu a{{text-align:left}}.language-menu a{{cursor:pointer}}
 
 /* v5.5.0 UI polish: clearer controls, focus states and responsive spacing */
 .btn, button, input[type="submit"] {{
@@ -1738,7 +1782,7 @@ def page(title, body, logged=True, notice="", kind="ok"):
   .btn, button, input[type="submit"] {{ width: 100%; }}
 }}
 .backup-row{{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}}.backup-row:last-child{{border-bottom:0}}.latest-backup-box{{padding:18px;border:1px solid rgba(139,92,246,.30);border-radius:20px;background:linear-gradient(145deg,rgba(139,92,246,.12),rgba(34,211,238,.055) 55%,rgba(236,72,153,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 18px 45px rgba(0,0,0,.12)}}.latest-backup-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}}.latest-backup-head strong{{display:block;font-size:15px;word-break:break-all;margin:3px 0 5px}}.latest-kicker{{display:block;font-size:9px;letter-spacing:1.7px;color:#67e8f9;font-weight:900}}.latest-badge{{white-space:nowrap;font-size:10px;font-weight:900;padding:7px 10px;border-radius:999px;background:rgba(34,211,238,.10);border:1px solid rgba(34,211,238,.22);color:#67e8f9}}.latest-backup-actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}}.latest-backup-actions form{{margin:0}}.older-backups{{margin-top:18px}}.section-label{{font-size:11px;font-weight:900;color:var(--muted);margin-bottom:8px}}.older-backups .backup-row:first-of-type{{border-top:1px solid var(--line)}}
-.compact{{margin:0!important;gap:8px}}.compact form{{margin:0}}.btn.danger{{border-color:rgba(239,68,68,.35)}}.health-list .meta-row strong{{font-size:12px}}.disk-meter{{padding-top:6px}}.disk-bar{{height:10px;border-radius:999px;background:rgba(127,127,127,.16);overflow:hidden;margin:8px 0 14px}}.disk-bar span{{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--pink),var(--red));transition:width .4s ease}}.resource-monitor{{display:grid;gap:18px}}.resource-summary{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}.resource-stat{{position:relative;display:flex;align-items:center;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}}.resource-stat:after{{content:"";position:absolute;inset:auto -25px -45px auto;width:100px;height:100px;border-radius:50%;filter:blur(25px);opacity:.22}}.resource-stat.cpu:after{{background:#6ee7ff}}.resource-stat.ram:after{{background:#ff4fa3}}.resource-stat.disk:after{{background:#ff9b4a}}.rs-icon{{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.055);font-size:20px}}.resource-stat.cpu .rs-icon{{color:#6ee7ff}}.resource-stat.ram .rs-icon{{color:#ff4fa3}}.resource-stat.disk .rs-icon{{color:#ff9b4a}}.resource-stat small{{display:block;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:800}}.resource-stat strong{{display:block;font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;font-size:22px;margin-top:3px;letter-spacing:.2px}}.resource-stat i{{position:absolute;left:0;bottom:0;width:42%;height:2px}}.resource-stat.cpu i{{background:linear-gradient(90deg,#6ee7ff,transparent)}}.resource-stat.ram i{{background:linear-gradient(90deg,#ff4fa3,transparent)}}.resource-stat.disk i{{background:linear-gradient(90deg,#ff9b4a,transparent)}}.resource-plot{{border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(10,13,28,.66),rgba(41,14,48,.38));padding:18px 18px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 20px 60px rgba(0,0,0,.12);overflow:hidden}}.light .resource-plot{{background:linear-gradient(145deg,rgba(255,255,255,.55),rgba(255,224,242,.42))}}.plot-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}}.plot-kicker{{display:block;font-size:9px;letter-spacing:1.8px;color:#a78bfa;font-weight:900;margin-bottom:3px}}.plot-head b{{font-size:15px}}.live-dot{{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1px;font-weight:900;color:#6ee7b7}}.live-dot i{{width:7px;height:7px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 12px #6ee7b7;animation:livePulse 1.5s ease-in-out infinite}}@keyframes livePulse{{50%{{opacity:.35;transform:scale(.72)}}}}.plot-body{{position:relative;padding-right:38px}}.y-axis{{position:absolute;right:0;top:0;bottom:25px;width:34px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;color:var(--muted);font-size:9px}}.telemetry{{display:block;width:100%;height:270px;overflow:visible}}.grid-lines line{{stroke:currentColor;stroke-opacity:.08;stroke-width:1}}.area{{stroke:none}}.cpu-area{{fill:url(#fillCpu)}}.ram-area{{fill:url(#fillRam)}}.disk-area{{fill:url(#fillDisk)}}.line{{fill:none;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;filter:url(#glowC)}}.cpu-line{{stroke:#6ee7ff}}.ram-line{{stroke:#ff4fa3;filter:url(#glowP)}}.disk-line{{stroke:#ff9b4a}}.dot{{stroke:rgba(255,255,255,.9);stroke-width:2}}.cpu-dot{{fill:#6ee7ff}}.ram-dot{{fill:#ff4fa3}}.disk-dot{{fill:#ff9b4a}}.chart-legend{{display:flex;align-items:center;justify-content:flex-start;gap:18px;margin-top:2px;padding:0 4px;flex-wrap:wrap}}.legend{{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);font-weight:800}}.legend i{{width:8px;height:8px;border-radius:50%;box-shadow:0 0 10px currentColor}}.legend.cpu{{color:#6ee7ff}}.legend.ram{{color:#ff4fa3}}.legend.disk{{color:#ff9b4a}}.updated{{margin-right:auto;font-size:9px;color:var(--muted)}}.mini-chart{{height:190px;display:flex;align-items:end;gap:8px;padding:10px 2px 4px}}.chart-col{{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:6px}}.chart-value{{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}}.chart-bar{{height:115px;width:min(28px,70%);display:flex;align-items:end;border-radius:10px 10px 4px 4px;background:rgba(139,92,246,.10);overflow:hidden}}.chart-bar span{{display:block;width:100%;border-radius:inherit;background:linear-gradient(180deg,var(--accent2),var(--accent),var(--pink));min-height:3px}}.chart-col small{{font-size:9px;color:var(--muted)}}@media(max-width:720px){{.backup-row{{align-items:stretch;flex-direction:column}}.backup-row .actions{{width:100%}}.mini-chart{{height:170px}}.chart-value{{font-size:8px}}.resource-summary{{grid-template-columns:1fr}}.resource-stat{{padding:12px 14px}}.resource-stat strong{{font-size:20px}}.resource-plot{{padding:15px 12px 10px;border-radius:18px}}.telemetry{{height:210px}}.plot-body{{padding-right:32px}}.chart-legend{{gap:12px}}.updated{{width:100%;margin-right:0}}}}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="زبان" title="زبان">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a></div></div><div class="theme-picker"><button class="theme-toggle" id="themeToggle" type="button" aria-label="انتخاب تم" title="انتخاب تم">☀️</button><div class="theme-menu" id="themeMenu" hidden><button type="button" data-theme-choice="dark">🌙 <span>Dark</span></button><button type="button" data-theme-choice="light">☀️ <span>Light</span></button><button type="button" data-theme-choice="custom">🎨 <span>Custom</span></button></div></div><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div id="loginToast" class="login-toast" hidden></div><div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");const themeMenu=document.getElementById("themeMenu");const choices=document.querySelectorAll("[data-theme-choice]");function apply(t){{root.classList.remove("light","custom","theme-aurora","theme-ocean","theme-emerald","theme-sunset","theme-rose","theme-violet","theme-ruby");if(t==="light")root.classList.add("light");else if(t==="custom")root.classList.add("custom");else if(t!=="dark")root.classList.add("theme-"+t);if(btn){{btn.textContent=({{light:"☀️",custom:"🎨",dark:"🌙",aurora:"🌌",ocean:"🌊",emerald:"💚",sunset:"🌅",rose:"🌹",violet:"💜"}}[t]||"🌙");btn.title="Choose theme"}}choices.forEach(function(x){{x.classList.toggle("active",x.dataset.themeChoice===t)}});const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute("content",t==="light"?"#fff1f8":t==="custom"?"var(--bg)":"#06070d")}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}if(!["light","custom","dark","aurora","ocean","emerald","sunset","rose","violet","ruby"].includes(t))t="dark";apply(t);if(btn)btn.addEventListener("click",function(e){{e.stopPropagation();if(themeMenu)themeMenu.hidden=!themeMenu.hidden}});choices.forEach(function(x){{x.addEventListener("click",function(){{t=x.dataset.themeChoice;apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}if(themeMenu)themeMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(themeMenu&&!themeMenu.hidden&&!themeMenu.contains(e.target)&&e.target!==btn)themeMenu.hidden=true}});const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});if("serviceWorker" in navigator){{navigator.serviceWorker.register("/sw.js").catch(function(){{}})}}const loginNotice=window.idontLoginNotice||null;const loginToast=document.getElementById("loginToast");if(loginNotice&&loginToast){{loginToast.textContent="⚡ "+loginNotice.text+(loginNotice.ip?" · IP: "+loginNotice.ip:"");loginToast.hidden=false;requestAnimationFrame(function(){{loginToast.classList.add("show")}});setTimeout(function(){{loginToast.classList.remove("show");setTimeout(function(){{loginToast.hidden=true}},350)}},10000)}}const cd=document.getElementById("backupCountdown");if(cd){{let sec=parseInt(cd.textContent,10);if(Number.isFinite(sec)&&sec>=0){{const fmt=function(s){{s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return (d?d+" روز ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")}};cd.textContent=fmt(sec);setInterval(function(){{if(sec>0)sec--;cd.textContent=fmt(sec)}},1000)}}}}}})();</script></body></html>'''
+.logs-list{{display:grid;gap:10px}}.log-entry{{padding:14px 15px;border:1px solid var(--line);border-radius:17px;background:rgba(255,255,255,.035);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}}.log-entry.log-ok{{border-color:rgba(52,211,153,.20)}}.log-entry.log-bad{{border-color:rgba(251,113,133,.24)}}.log-entry.log-warn{{border-color:rgba(255,212,92,.20)}}.log-main{{display:flex;align-items:center;gap:11px;min-width:0}}.log-icon{{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:12px;background:var(--glass2);font-size:18px}}.log-copy{{min-width:0;flex:1}}.log-copy strong{{display:block;font-size:12px;line-height:1.55;overflow-wrap:anywhere}}.log-copy small{{display:block;margin-top:4px;color:var(--muted);font-size:10px;overflow-wrap:anywhere}}.log-status{{flex:0 0 auto;font-size:9px;font-weight:900;letter-spacing:.8px;padding:6px 8px;border-radius:999px;background:var(--glass2);color:var(--muted)}}.log-ok .log-status{{color:#6ee7b7}}.log-bad .log-status{{color:#ff91a5}}.log-warn .log-status{{color:#ffe58d}}.log-meta{{display:flex;justify-content:space-between;gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}}.log-meta strong{{color:var(--text);font-size:11px}}@media(max-width:600px){{.log-status{{font-size:8px;padding:5px 6px}}.log-main{{align-items:flex-start}}.log-icon{{width:34px;height:34px;flex-basis:34px}}}}.compact{{margin:0!important;gap:8px}}.compact form{{margin:0}}.btn.danger{{border-color:rgba(239,68,68,.35)}}.health-list .meta-row strong{{font-size:12px}}.disk-meter{{padding-top:6px}}.disk-bar{{height:10px;border-radius:999px;background:rgba(127,127,127,.16);overflow:hidden;margin:8px 0 14px}}.disk-bar span{{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--pink),var(--red));transition:width .4s ease}}.resource-monitor{{display:grid;gap:18px}}.resource-summary{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}.resource-stat{{position:relative;display:flex;align-items:center;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}}.resource-stat:after{{content:"";position:absolute;inset:auto -25px -45px auto;width:100px;height:100px;border-radius:50%;filter:blur(25px);opacity:.22}}.resource-stat.cpu:after{{background:#6ee7ff}}.resource-stat.ram:after{{background:#ff4fa3}}.resource-stat.disk:after{{background:#ff9b4a}}.rs-icon{{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.055);font-size:20px}}.resource-stat.cpu .rs-icon{{color:#6ee7ff}}.resource-stat.ram .rs-icon{{color:#ff4fa3}}.resource-stat.disk .rs-icon{{color:#ff9b4a}}.resource-stat small{{display:block;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:800}}.resource-stat strong{{display:block;font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;font-size:22px;margin-top:3px;letter-spacing:.2px}}.resource-stat i{{position:absolute;left:0;bottom:0;width:42%;height:2px}}.resource-stat.cpu i{{background:linear-gradient(90deg,#6ee7ff,transparent)}}.resource-stat.ram i{{background:linear-gradient(90deg,#ff4fa3,transparent)}}.resource-stat.disk i{{background:linear-gradient(90deg,#ff9b4a,transparent)}}.resource-plot{{border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(10,13,28,.66),rgba(41,14,48,.38));padding:18px 18px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 20px 60px rgba(0,0,0,.12);overflow:hidden}}.light .resource-plot{{background:linear-gradient(145deg,rgba(255,255,255,.55),rgba(255,224,242,.42))}}.plot-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}}.plot-kicker{{display:block;font-size:9px;letter-spacing:1.8px;color:#a78bfa;font-weight:900;margin-bottom:3px}}.plot-head b{{font-size:15px}}.live-dot{{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1px;font-weight:900;color:#6ee7b7}}.live-dot i{{width:7px;height:7px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 12px #6ee7b7;animation:livePulse 1.5s ease-in-out infinite}}@keyframes livePulse{{50%{{opacity:.35;transform:scale(.72)}}}}.plot-body{{position:relative;padding-right:38px}}.y-axis{{position:absolute;right:0;top:0;bottom:25px;width:34px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;color:var(--muted);font-size:9px}}.telemetry{{display:block;width:100%;height:270px;overflow:visible}}.grid-lines line{{stroke:currentColor;stroke-opacity:.08;stroke-width:1}}.area{{stroke:none}}.cpu-area{{fill:url(#fillCpu)}}.ram-area{{fill:url(#fillRam)}}.disk-area{{fill:url(#fillDisk)}}.line{{fill:none;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;filter:url(#glowC)}}.cpu-line{{stroke:#6ee7ff}}.ram-line{{stroke:#ff4fa3;filter:url(#glowP)}}.disk-line{{stroke:#ff9b4a}}.dot{{stroke:rgba(255,255,255,.9);stroke-width:2}}.cpu-dot{{fill:#6ee7ff}}.ram-dot{{fill:#ff4fa3}}.disk-dot{{fill:#ff9b4a}}.chart-legend{{display:flex;align-items:center;justify-content:flex-start;gap:18px;margin-top:2px;padding:0 4px;flex-wrap:wrap}}.legend{{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);font-weight:800}}.legend i{{width:8px;height:8px;border-radius:50%;box-shadow:0 0 10px currentColor}}.legend.cpu{{color:#6ee7ff}}.legend.ram{{color:#ff4fa3}}.legend.disk{{color:#ff9b4a}}.updated{{margin-right:auto;font-size:9px;color:var(--muted)}}.mini-chart{{height:190px;display:flex;align-items:end;gap:8px;padding:10px 2px 4px}}.chart-col{{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:6px}}.chart-value{{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}}.chart-bar{{height:115px;width:min(28px,70%);display:flex;align-items:end;border-radius:10px 10px 4px 4px;background:rgba(139,92,246,.10);overflow:hidden}}.chart-bar span{{display:block;width:100%;border-radius:inherit;background:linear-gradient(180deg,var(--accent2),var(--accent),var(--pink));min-height:3px}}.chart-col small{{font-size:9px;color:var(--muted)}}@media(max-width:720px){{.backup-row{{align-items:stretch;flex-direction:column}}.backup-row .actions{{width:100%}}.mini-chart{{height:170px}}.chart-value{{font-size:8px}}.resource-summary{{grid-template-columns:1fr}}.resource-stat{{padding:12px 14px}}.resource-stat strong{{font-size:20px}}.resource-plot{{padding:15px 12px 10px;border-radius:18px}}.telemetry{{height:210px}}.plot-body{{padding-right:32px}}.chart-legend{{gap:12px}}.updated{{width:100%;margin-right:0}}}}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="زبان" title="زبان">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a></div></div><div class="theme-picker"><button class="theme-toggle" id="themeToggle" type="button" aria-label="انتخاب تم" title="انتخاب تم">☀️</button><div class="theme-menu" id="themeMenu" hidden><button type="button" data-theme-choice="dark">🌙 <span>Dark</span></button><button type="button" data-theme-choice="light">☀️ <span>Light</span></button><button type="button" data-theme-choice="custom">🎨 <span>Custom</span></button></div></div><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div id="loginToast" class="login-toast" hidden></div><div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");const themeMenu=document.getElementById("themeMenu");const choices=document.querySelectorAll("[data-theme-choice]");function apply(t){{root.classList.remove("light","custom","theme-aurora","theme-ocean","theme-emerald","theme-sunset","theme-rose","theme-violet","theme-ruby");if(t==="light")root.classList.add("light");else if(t==="custom")root.classList.add("custom");else if(t!=="dark")root.classList.add("theme-"+t);if(btn){{btn.textContent=({{light:"☀️",custom:"🎨",dark:"🌙",aurora:"🌌",ocean:"🌊",emerald:"💚",sunset:"🌅",rose:"🌹",violet:"💜"}}[t]||"🌙");btn.title="Choose theme"}}choices.forEach(function(x){{x.classList.toggle("active",x.dataset.themeChoice===t)}});const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute("content",t==="light"?"#fff1f8":t==="custom"?"var(--bg)":"#06070d")}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}if(!["light","custom","dark","aurora","ocean","emerald","sunset","rose","violet","ruby"].includes(t))t="dark";apply(t);if(btn)btn.addEventListener("click",function(e){{e.stopPropagation();if(themeMenu)themeMenu.hidden=!themeMenu.hidden}});choices.forEach(function(x){{x.addEventListener("click",function(){{t=x.dataset.themeChoice;apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}if(themeMenu)themeMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(themeMenu&&!themeMenu.hidden&&!themeMenu.contains(e.target)&&e.target!==btn)themeMenu.hidden=true}});const langBtn=document.getElementById("languageToggle");const langMenu=document.getElementById("languageMenu");if(langBtn&&langMenu){{langBtn.addEventListener("click",function(e){{e.preventDefault();e.stopPropagation();langMenu.hidden=!langMenu.hidden;if(themeMenu)themeMenu.hidden=true}});langMenu.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{langMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(!langMenu.hidden&&!langMenu.contains(e.target)&&e.target!==langBtn)langMenu.hidden=true}})}}const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});if("serviceWorker" in navigator){{navigator.serviceWorker.register("/sw.js").catch(function(){{}})}}const loginNotice=window.idontLoginNotice||null;const loginToast=document.getElementById("loginToast");if(loginNotice&&loginToast){{loginToast.textContent="⚡ "+loginNotice.text+(loginNotice.ip?" · IP: "+loginNotice.ip:"");loginToast.hidden=false;requestAnimationFrame(function(){{loginToast.classList.add("show")}});setTimeout(function(){{loginToast.classList.remove("show");setTimeout(function(){{loginToast.hidden=true}},350)}},10000)}}const cd=document.getElementById("backupCountdown");if(cd){{let sec=parseInt(cd.textContent,10);if(Number.isFinite(sec)&&sec>=0){{const fmt=function(s){{s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return (d?d+" روز ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")}};cd.textContent=fmt(sec);setInterval(function(){{if(sec>0)sec--;cd.textContent=fmt(sec)}},1000)}}}}}})();</script></body></html>'''
 
 
 def hidden_csrf(sid):
@@ -2073,6 +2117,9 @@ class Handler(BaseHTTPRequestHandler):
                     location = "/"
             except Exception:
                 location = "/"
+            if self.sid():
+                username,ip,device=_request_context(self)
+                _record_activity(f"Language changed to {lang.upper()}","info","settings",username,ip,device)
             self.send_response(302)
             self.send_header("Set-Cookie", f"idontpg_lang={lang}; Max-Age=31536000; Path=/; SameSite=Lax")
             self.send_header("Location", location)
@@ -2091,7 +2138,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             sid = self.sid()
             was_admin = bool(sid and SESSIONS.get(sid, {}).get("role") == "admin")
-            if sid: SESSIONS.pop(sid, None)
+            if sid:
+                username,ip,device=_request_context(self)
+                _record_activity("Panel logout","ok","logout",username,ip,device)
+                SESSIONS.pop(sid, None)
             self.send_response(302)
             self.send_header("Set-Cookie", "idontpg_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/")
             self.send_header("Location", ADMIN_PATH if was_admin else "/login")
@@ -2230,96 +2280,37 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(302); self.send_header("Location","/login"); self.end_headers(); return
             current_username = canonical_username(session_info.get("username") or c.get("username","admin"))
             current_role = str(session_info.get("role") or "user")
-            logs = [x for x in get_login_logs() if canonical_username(x.get("username","admin")) == current_username and str(x.get("role","user")) == current_role]
+            audit = []
+            for x in get_all_activities():
+                owner = canonical_username(x.get("username") or current_username)
+                if owner == current_username:
+                    audit.append(x)
+            # Also include legacy login records that predate the unified audit log.
+            for x in get_login_logs():
+                if canonical_username(x.get("username","admin")) == current_username and str(x.get("role","user")) == current_role:
+                    audit.append({"time":x.get("time",0),"message":"Successful panel login","kind":"ok","event":"login_success","username":current_username,"ip":x.get("ip","unknown"),"device":x.get("device","Unknown")})
+            audit.sort(key=lambda x: float(x.get("time",0) or 0), reverse=True)
             rows=[]
-            for x in logs[:50]:
+            labels={
+                "ok":"SUCCESS","bad":"FAILED","warn":"WARNING","info":"INFO"
+            }
+            icons={
+                "login_success":"🔐","login_failed":"🚫","backup_start":"📦","backup_success":"✅","backup_failed":"❌",
+                "telegram_success":"📨","telegram_failed":"⚠️","telegram_test_success":"🧪","telegram_test_failed":"🧪",
+                "scheduler":"⏱️","account":"👤","settings":"⚙️","backup_delete":"🗑️","logout":"↩️","activity":"•"
+            }
+            for x in audit[:100]:
                 ts=float(x.get("time",0) or 0)
-                rows.append(f'<div class="meta-row"><span>🔐 {html.escape(current_username)} · {html.escape(str(x.get("device","Unknown")))}</span><strong>{html.escape(str(x.get("ip","unknown")))} · {html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))}</strong></div>')
-            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
-            self.send_html(page("Logs",body)); return
-
-        self.send_html(page("404", '<div class="glass"><h2>404</h2><p class="empty">صفحه پیدا نشد.</p></div>'), 404)
-
-    def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
-        c = load_cfg()
-        data = self.form()
-
-        if path == "/setup":
-            # First-run setup is one-time only. Once a password exists, this route
-            # can never be used to replace the admin credentials.
-            if c.get("password_hash"):
-                self.send_html(page("Setup", '<div class="glass"><div class="notice bad">راه‌اندازی اولیه قبلاً انجام شده است.</div><a class="btn" href="/login">ورود به پنل</a></div>', False), 403); return
-            username = data.get("username", "").strip()
-            pw = data.get("password", "")
-            confirm = data.get("password_confirm", "")
-            if not valid_username(username):
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
-            if not valid_password(pw):
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
-            if pw != confirm:
-                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">تکرار رمز عبور با رمز جدید یکسان نیست.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
-            salt, digest = hash_password(pw)
-            c.update({"username": username, "password_salt": salt, "password_hash": digest})
-            save_cfg(c)
-            self.redirect("/login"); return
-
-        if path == "/login":
-            username_ok = hmac.compare_digest(data.get("username", "").strip(), canonical_username(c.get("username", "admin")))
-            if username_ok and check_password(data.get("password", ""), c):
-                sid = secrets.token_urlsafe(32)
-                login_ip=self.client_address[0] if self.client_address else "unknown"
-                login_time=_record_login(login_ip,canonical_username(c.get("username","admin")),"user",_login_device(self.headers.get("User-Agent","")))
-                c["last_login"]={"time":login_time,"ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c)
-                _record_activity(f"ورود موفق به پنل از {login_ip}","ok")
-                _notify_login_telegram(c,login_ip,canonical_username(c.get("username","admin")))
-                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24), "role": "user", "username": canonical_username(c.get("username","admin")), "login_notice":{"text":"ورود با موفقیت انجام شد","ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}}
-                self.send_response(302)
-                self.send_header("Set-Cookie", "idontpg_session=" + sid + "; HttpOnly; SameSite=Strict; Path=/")
-                self.send_header("Location", "/")
-                self.end_headers()
-            else:
-                self.send_html(self.login_page("نام کاربری یا رمز عبور اشتباه است."), 401)
-            return
-
-        if path == ADMIN_PATH:
-            if not self.admin_logged():
-                ip=self.client_address[0] if self.client_address else "unknown"; now=time.time(); recent=[x for x in ADMIN_LOGIN_ATTEMPTS.get(ip,[]) if now-x<900]
-                if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
-                ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
-                if not ok:
-                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
-                ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
-                self.send_response(303); self.send_header("Set-Cookie",f"idontpg_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200"); self.send_header("Location",ADMIN_PATH); self.end_headers(); return
-            if not self.require_csrf(data):
-                self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
-            try:
-                ui=idont_apply_ui_settings(data)
-                t=ui.setdefault("theme",{})
-                t["content_width"]=_ui_int(data.get("content_width",t.get("content_width",1180)),1180,860,1500)
-                t["card_gap"]=_ui_int(data.get("card_gap",t.get("card_gap",16)),16,8,32)
-                t["shadow_strength"]=_ui_float(data.get("shadow_strength",t.get("shadow_strength",.5)),.5,0,1)
-                ui["brand_subtitle"]=str(data.get("brand_subtitle",ui.get("brand_subtitle","Backup Control Center · durwinam")))[:120]
-                idont_save_ui_settings(ui)
-                self.send_html(page("Admin",'<div class="glass"><div class="notice ok">تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.</div><a class="btn primary" href="'+ADMIN_PATH+'">بازگشت به مدیریت</a></div>'))
-            except Exception as exc:
-                self.send_html(page("Admin",f'<div class="glass"><div class="notice bad">ذخیره تنظیمات ناموفق بود: {html.escape(str(exc))}</div><a class="btn" href="{ADMIN_PATH}">تلاش دوباره</a></div>'),500)
-            return
-
-        if not self.logged():
-            self.redirect("/login"); return
-        if not self.require_csrf(data):
-            self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
-
-        if path == "/logs":
-            session_info = SESSIONS.get(self.sid(), {})
-            current_username = canonical_username(session_info.get("username") or c.get("username", "admin"))
-            current_role = str(session_info.get("role") or "user")
-            logs = [x for x in get_login_logs() if canonical_username(x.get("username", "admin")) == current_username and str(x.get("role", "user")) == current_role]
-            rows=[]
-            for x in logs[:50]:
-                ts=float(x.get("time",0) or 0); rows.append('<div class="meta-row"><span>🔐 '+html.escape(current_username)+' · '+html.escape(str(x.get("device","Unknown")))+'</span><strong>'+html.escape(str(x.get("ip","unknown")))+' · '+html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))+'</strong></div>')
-            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
+                kind=str(x.get("kind","info"))
+                event=str(x.get("event","activity"))
+                icon=icons.get(event,"•")
+                status=labels.get(kind,kind.upper())
+                msg=html.escape(str(x.get("message","Activity")))
+                ip=html.escape(str(x.get("ip") or "—"))
+                device=html.escape(str(x.get("device") or "—"))
+                stamp=html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))
+                rows.append(f'<div class="log-entry log-{html.escape(kind)}"><div class="log-main"><span class="log-icon">{icon}</span><div class="log-copy"><strong>{msg}</strong><small>{stamp} · {device}</small></div><span class="log-status">{status}</span></div><div class="log-meta"><span>IP</span><strong>{ip}</strong></div></div>')
+            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>تاریخچه ورود، Backup، Telegram، Scheduler و فعالیت‌های پنل همین سرور.</p></section><div class="glass wide"><div class="activity-list logs-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
             self.send_html(page("Logs",body)); return
 
         if path == "/account":
@@ -2337,16 +2328,22 @@ class Handler(BaseHTTPRequestHandler):
                 salt, digest = hash_password(pw)
                 c.update({"password_salt": salt, "password_hash": digest})
             save_cfg(c)
+            username_ctx,ip_ctx,device_ctx=_request_context(self)
+            _record_activity("Account settings saved","ok","account",username_ctx,ip_ctx,device_ctx)
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
             save_cfg(c)
+            username,ip,device=_request_context(self)
+            _record_activity("Telegram settings saved","ok","settings",username,ip,device)
             self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
 
         if path == "/test":
             ok, msg = telegram_test(c)
+            username,ip,device=_request_context(self)
+            _record_activity("Telegram test message sent successfully" if ok else f"Telegram test message failed: {msg}","ok" if ok else "bad","telegram_test_success" if ok else "telegram_test_failed",username,ip,device)
             kind = "ok" if ok else "bad"
             body = f'<div class="glass"><div class="notice {kind}">{status_dot("ok" if ok else "bad")} {"پیام تست با موفقیت ارسال شد." if ok else "ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
@@ -2361,11 +2358,14 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             p = scheduler_service("restart")
             ok = p.returncode == 0
+            username,ip,device=_request_context(self)
+            _record_activity("Backup Scheduler restarted" if ok else "Backup Scheduler restart failed","ok" if ok else "bad","scheduler",username,ip,device)
             self.send_html(page("Backup Settings", f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{"Scheduler ذخیره و شروع شد." if ok else "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد."}</div><a class="btn" href="/backup-settings">برگشت</a></div>')); return
 
         if path == "/stop":
             p = scheduler_service("stop")
-            _record_activity("Scheduler متوقف شد", "ok" if p.returncode == 0 else "bad")
+            username,ip,device=_request_context(self)
+            _record_activity("Backup Scheduler stopped","ok" if p.returncode == 0 else "bad","scheduler",username,ip,device)
             self.redirect("/backup-settings"); return
 
         if path == "/backup-delete":
@@ -2374,14 +2374,15 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not target.is_file():
                 self.send_html(page("Backup",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
             try:
-                target.unlink(); _record_activity(f"Backup حذف شد: {requested}","ok"); self.redirect("/backups")
+                target.unlink(); username,ip,device=_request_context(self); _record_activity(f"Backup deleted: {requested}","ok","backup_delete",username,ip,device); self.redirect("/backups")
             except OSError as exc:
                 self.send_html(page("Backup",f'<div class="glass"><div class="notice bad">حذف Backup ناموفق بود: {html.escape(str(exc))}</div></div>'),500)
             return
 
         if path == "/backup":
+            username,ip,device=_request_context(self)
             try:
-                ok, msg = make_backup(send=True)
+                ok, msg = make_backup(send=True, audit=(username,ip,device))
             except Exception as e:
                 ok, msg = False, str(e)
             body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{status_dot("ok" if ok else "bad")} {("Backup با موفقیت ساخته و ارسال شد." if ok else "Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
