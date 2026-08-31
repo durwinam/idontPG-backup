@@ -1550,7 +1550,123 @@ def ui_theme_css():
 body.custom .container{{width:min(var(--theme-width),calc(100% - 34px))}}body.custom .grid{{gap:var(--theme-gap)}}body.custom .glass{{color:var(--text);background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--glass2) 55%,transparent))!important;border-color:var(--line)!important;border-radius:var(--theme-radius)!important;backdrop-filter:blur(var(--theme-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--theme-blur)) saturate(145%)}}
 body.custom .meta-row,body.custom .resource-stat,body.custom .chart-bar,body.custom .theme-toggle,body.custom .menu-toggle{{background:var(--glass2);border-color:var(--line);color:var(--text)}}body.custom .drawer{{background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--accent) 12%,var(--glass)))!important;border-color:var(--line)!important}}body.custom .drawer-link{{color:var(--text);background:var(--glass2);border-color:transparent}}body.custom .drawer-link:hover{{border-color:var(--accent2)}}body.custom .title,body.custom .brand h1,body.custom .field label,body.custom .field input,body.custom .field select{{color:var(--text)}}body.custom .sub,body.custom .empty,body.custom .hint,body.custom .pill,body.custom .brand p,body.custom .footer,body.custom .meta-label,body.custom .updated,body.custom .legend,body.custom .drawer-link small{{color:var(--muted)}}body.custom .gradient{{background:linear-gradient(90deg,var(--text),var(--accent2),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}}body.custom .btn.primary{{background:linear-gradient(135deg,var(--accent),var(--accent2))!important;color:#fff!important;box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 35%,transparent)!important}}body.custom .btn:not(.primary){{background:var(--glass2);color:var(--text);border-color:var(--line)}}body.custom .field input,body.custom .field select,body.custom textarea{{background:var(--glass2);color:var(--text);border-color:var(--line)}}body.custom .neo-icon{{color:var(--accent2);background:linear-gradient(145deg,color-mix(in srgb,var(--accent2) 13%,transparent),color-mix(in srgb,var(--accent) 18%,transparent))!important;border-color:var(--line)!important}}body.custom .resource-plot{{background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--pink) 10%,var(--glass)))!important;border-color:var(--line)!important}}body.custom .theme-toggle:hover,body.custom .menu-toggle:hover{{border-color:var(--accent2);box-shadow:0 10px 30px color-mix(in srgb,var(--accent2) 18%,transparent)}}body.custom .aurora .o1{{background:var(--accent)}}body.custom .aurora .o2{{background:var(--accent2)}}body.custom .aurora .o3{{background:var(--pink)}}body.custom .glass,body.custom .card{{box-shadow:0 24px 70px var(--shadow-color)}}body.custom .card:hover{{box-shadow:0 28px 90px var(--shadow-color)}}body.custom{{font-size:var(--theme-font)}}'''
 
-def page(title, body, logged=True, notice="", kind="ok"):
+EN_TRANSLATIONS = {
+    "Bot Token و Chat ID الزامی هستند.": "Bot Token and Chat ID are required.",
+    "Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.": "Invalid Topic ID. Enter a message_thread_id number or a Telegram Topic link.",
+    "فایل Backup ساخته نشد.": "Backup file could not be created.",
+    "تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.": "Large-file splitting for Telegram is not available in the Backup core.",
+    "ارسال قسمت {i} ناموفق بود: {msg}": "Part {i} failed to send: {msg}",
+    "Backup در {len(chunks)} قسمت ارسال شد.": "Backup was sent in {len(chunks)} parts.",
+    "Backup دستی ساخته شد": "Manual Backup created",
+    "Backup ساخته شد: {archive}": "Backup created: {archive}",
+    "Backup و ارسال به Telegram موفق بود": "Backup and Telegram delivery succeeded",
+    "Backup ساخته شد ولی ارسال Telegram ناموفق بود": "Backup was created, but Telegram delivery failed",
+    "Backup ناموفق بود": "Backup failed",
+    "ورود موفق به پنل\\n👤 {username}\\n🌐 IP: {ip}\\n🕐 {time.strftime(": "Successful panel login\\n👤 {username}\\n🌐 IP: {ip}\\n🕐 {time.strftime(\"",
+    "همین الان": "Just now", "دقیقه پیش": "minutes ago", "ساعت پیش": "hours ago", "روز پیش": "days ago",
+    "هنوز Backup ساخته نشده": "No Backup has been created yet.",
+    "قابل دریافت نیست": "Unavailable",
+    "وضعیت لحظه‌ای سرور": "Live Server Status",
+    "نمودار لحظه‌ای منابع سرور": "Live Server Resource Chart",
+    "اکنون": "Now", "به‌روزرسانی:": "Updated:",
+    "در حال اجرا": "Running", "تنظیم شده": "Configured", "تنظیم نشده": "Not configured",
+    "فعال": "Active", "متوقف": "Stopped", "استفاده": "Usage",
+    "بستن منو": "Close menu", "منوی اصلی": "Main Menu", "داشبورد": "Dashboard", "نمای کلی سیستم": "System overview",
+    "بکاپ تلگرام": "Telegram Backup", "تنظیمات و ارسال": "Settings and delivery",
+    "تنظیمات بکاپ": "Backup Settings", "تنظیمات و Backup": "Settings and Backup",
+    "Scheduler و Backup": "Scheduler & Backup",
+    "تست تلگرام": "Telegram Test", "بررسی اتصال": "Connection check",
+    "لاگ‌ها": "Logs", "ورود و فعالیت": "Login and activity", "حساب کاربری": "Account", "مدیریت ورود": "Login management",
+    "دکمه": "Button", "لینک سفارشی": "Custom link", "تم‌های شخصی": "Personal Themes", "خروج": "Logout", "پایان نشست": "End session",
+    "باز کردن منو": "Open menu", "منو": "Menu", "انتخاب تم": "Choose theme", "روز": "Day",
+    "اطلاعات بکاپ": "Backup Information", "حجم مصرفی": "Data Usage", "فعالیت‌های اخیر": "Recent Activity",
+    "مدیریت IDONT": "IDONT Administration", "تنظیمات از کد اصلی جدا ذخیره می‌شوند": "Settings are stored separately from the core code.",
+    "بازگشت": "Back", "نام پنل": "Panel Name", "تعداد فعالیت‌های اخیر": "Recent Activity Count", "اندازه فونت": "Font Size",
+    "نمایش بخش‌ها": "Visible Sections", "بکاپ": "Backup", "آمار سرور": "Server Statistics", "ظاهر": "Appearance",
+    "رنگ اصلی": "Primary Color", "رنگ دوم": "Secondary Color", "عرض Logo": "Logo Width", "شدت Glow": "Glow Strength",
+    "وضعیت": "Status", "آیکون": "Icon", "رنگ": "Color", "سرعت": "Speed", "متن‌ها": "Text",
+    "عنوان داشبورد": "Dashboard Title", "عنوان بکاپ": "Backup Title", "عنوان حجم مصرفی": "Usage Title", "عنوان فعالیت‌های اخیر": "Recent Activity Title",
+    "افزودن دکمه": "Add Button", "نام": "Name", "لینک": "Link", "دکمه‌های فعلی": "Current Buttons", "ذخیره تغییرات": "Save Changes",
+    "غیرفعال": "Inactive", "هشدار": "Warning", "اطلاعات": "Information",
+    "مدیریت خصوصی": "Private Administration", "این بخش فقط برای مدیر اصلی است.": "This area is for the main administrator only.",
+    "نام کاربری ادمین": "Admin Username", "رمز ادمین": "Admin Password", "ورود به مدیریت": "Admin Login",
+    "ورود به پنل": "Panel Login", "برای ورود، نام کاربری و رمز عبور ادمین را وارد کنید.": "Enter your admin username and password to sign in.",
+    "نام کاربری": "Username", "رمز عبور": "Password", "ورود امن ←": "Secure Login →",
+    "راه‌اندازی اولیه": "Initial Setup", "برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.": "Protect the panel by creating a username of 5–32 characters and a password of at least 8 characters with at least 2 letters, 1 number, and one of # @ *.",
+    "تکرار رمز": "Confirm Password", "ساخت حساب و ورود": "Create Account & Sign In",
+    "مرکز مدیریت": "Administration Center", "شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.": "Fully customize the appearance, dashboard, and web panel components.",
+    "شخصی‌سازی": "Customization", "شش تم آماده": "Six Preset Themes", "کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.": "Regular users do not see administrator theme controls.",
+    "پس‌زمینه": "Background", "شفافیت Glass": "Glass Opacity", "گردی کارت": "Card Radius", "Glow و حرکت": "Glow & Motion",
+    "سرعت انیمیشن": "Animation Speed", "متن و برند": "Text & Branding", "کنترل کامل Backup": "Complete Backup Control", "توضیح داشبورد": "Dashboard Description",
+    "عنوان Backup": "Backup Title", "عنوان مصرف": "Usage Title", "عنوان فعالیت": "Activity Title", "چیدمان و تجربه کاربر": "Layout & User Experience",
+    "عرض محتوای داشبورد": "Dashboard Content Width", "فاصله بین کارت‌ها": "Card Spacing", "شدت سایه کارت": "Card Shadow Strength", "عنوان کوچک زیر برند": "Brand Subtitle",
+    "بخش‌های داشبورد": "Dashboard Sections", "فعالیت‌ها": "Activity", "تعداد فعالیت‌ها": "Activity Count", "دکمه سفارشی": "Custom Button", "ذخیره همه تغییرات": "Save All Changes",
+    "همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.": "Everything for Backup management, Telegram delivery, and scheduling in one fast glass panel.",
+    "اطلاعات Backup": "Backup Information", "تعداد Backup": "Backup Count", "حجم کل Backupها": "Total Backup Size", "آخرین Backup": "Latest Backup",
+    "اطلاعات پنل": "Panel Information", "آنلاین": "Online", "آفلاین": "Offline", "لینک پنل": "Panel Link", "وضعیت پنل": "Panel Status",
+    "مصرف واقعی Node": "Node Usage", "دریافت مستقیم از PasarGuard Node": "Read directly from PasarGuard Node", "بازه": "Interval", "ساعت": "Hours",
+    "تنظیمات Telegram": "Telegram Settings", "ارسال تست": "Send Test", "تنظیمات Backup": "Backup Settings",
+    "زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.": "Enable or disable scheduling, create a manual Backup, or include PG-Node with the Backup.",
+    "مدیریت Backup": "Backup Manager", "دستی": "Manual", "ارسال تست پیام به Telegram": "Send a test message to Telegram", "قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.": "Check the connection before enabling the Scheduler.",
+    "ارسال پیام تست": "Send Test Message", "با Chat ID و Topic فعلی ارسال می‌شود.": "Sent using the current Chat ID and Topic.", "بعدی": "Next", "زمان باقی‌مانده": "Time Remaining", "وضعیت Scheduler": "Scheduler Status",
+    "آخرین فعالیت‌ها": "Latest Activity", "هنوز فعالیتی ثبت نشده.": "No activity has been recorded yet.", "سلامت بکاپ و سرویس‌ها": "Backup & Service Health",
+    "فضای دیسک": "Disk Space", "استفاده‌شده": "Used", "آزاد": "Free", "هفت روز اخیر": "Last 7 Days", "مدیریت Backupها": "Manage Backups",
+    "منابع سرور مجازی": "Virtual Server Resources", "پایش لحظه‌ای": "Live Monitoring", "دانلود": "Download", "حذف": "Delete",
+    "هنوز Backupای پیدا نشد.": "No Backup was found.", "دانلود مستقیم Backup": "Direct Backup Download", "حذف Backup": "Delete Backup",
+    "قدیمی دیگری وجود ندارد.": "No other older Backups.", "آخرین Backup ذخیره‌شده یا ارسال‌شده به Telegram همیشه در بالای این بخش قرار می‌گیرد.": "The latest saved or Telegram-delivered Backup always appears at the top of this section.",
+    "۳ Backup اخیر": "3 Recent Backups", "ساخت Backup جدید": "Create New Backup", "پیدا نشد.": "Not found.", "خواندن Backup ناموفق بود.": "Failed to read Backup.",
+    "نام کاربری و رمز ورود را مدیریت کنید.": "Manage your username and login password.", "فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.": "Only letters, numbers, and hyphens; 5–32 characters.",
+    "رمز عبور جدید": "New Password", "برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.": "Enter at least 8 characters to change the password. Leave this field empty if you do not want to change it.",
+    "تکرار رمز جدید": "Confirm New Password", "مشاهده لاگ‌ها": "View Logs", "آخرین ورود": "Last Login", "آخرین ورود موفق": "Last Successful Login", "زمان": "Time", "دستگاه / مرورگر": "Device / Browser",
+    "اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.": "Configure the bot, destination, Topic, proxy, and schedule; then start the Scheduler.",
+    "توکن BotFather را وارد کنید.": "Enter the BotFather token.", "شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.": "Enter the Topic number; a Telegram Topic link is also accepted.", "اختیاری. اگر Proxy ندارید خالی بگذارید.": "Optional. Leave empty if you do not use a proxy.",
+    "ذخیره تنظیمات": "Save Settings", "تست اتصال": "Test Connection", "برگشت": "Back",
+    "تنظیمات": "Settings", "کنترل Scheduler و اجرای Backup دستی.": "Control the Scheduler and run a manual Backup.", "زمان‌بندی خودکار": "Automatic Schedule", "بازه Backup (ساعت)": "Backup Interval (hours)",
+    "شامل PG-Node شود": "Include PG-Node", "ذخیره و شروع": "Save & Start", "توقف": "Stop", "همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.": "Create a full Backup now and send it to the current Telegram destination.",
+    "شروع Backup دستی": "Start Manual Backup", "تست": "Test", "یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.": "A test message will be sent using the current settings.", "بدون Proxy": "No Proxy",
+    "فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.": "Only the login history for this account is shown.", "هنوز لاگی برای این حساب ثبت نشده.": "No login logs have been recorded for this account.",
+    "صفحه پیدا نشد.": "Page not found.", "راه‌اندازی اولیه قبلاً انجام شده است.": "Initial setup has already been completed.", "تلاش دوباره": "Try Again",
+    "نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.": "Username must be 5–32 characters and contain only letters, numbers, or hyphens.",
+    "رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.": "Password must be at least 8 characters and include at least 2 letters, 1 number, and one of # @ *.",
+    "تکرار رمز عبور با رمز جدید یکسان نیست.": "Password confirmation does not match the new password.", "ورود موفق به پنل از {login_ip}": "Successful panel login from {login_ip}", "ورود با موفقیت انجام شد": "Login successful",
+    "نام کاربری یا رمز عبور اشتباه است.": "Incorrect username or password.", "تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.": "Too many attempts; try again in 15 minutes.", "نام کاربری یا رمز ادمین اشتباه است.": "Incorrect admin username or password.",
+    "ورود مدیر از {ip}": "Administrator login from {ip}", "ورود مدیر با موفقیت انجام شد": "Administrator login successful", "درخواست نامعتبر است.": "Invalid request.",
+    "تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.": "Settings saved successfully and applied to the entire web panel.", "بازگشت به مدیریت": "Back to Administration",
+    "ذخیره تنظیمات ناموفق بود: {html.escape(str(exc))}": "Failed to save settings: {html.escape(str(exc))}", "درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.": "Invalid or expired request. Reload the page and try again.",
+    "رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.": "New password must be at least 8 characters and include letters, at least one uppercase letter, one number, and one special character.",
+    "تنظیمات حساب با موفقیت ذخیره شد.": "Account settings saved successfully.", "تنظیمات Telegram با موفقیت ذخیره شد.": "Telegram settings saved successfully.", "برگشت به Telegram": "Back to Telegram",
+    "پیام تست با موفقیت ارسال شد.": "Test message sent successfully.", "ارسال پیام تست ناموفق بود.": "Failed to send test message.", "ذخیره و شروع شد.": "Saved and started.", "ذخیره شد ولی شروع آن با خطا مواجه شد.": "Saved, but starting it failed.",
+    "متوقف شد": "Stopped", "حذف شد: {requested}": "Deleted: {requested}", "حذف Backup ناموفق بود: {html.escape(str(exc))}": "Failed to delete Backup: {html.escape(str(exc))}",
+    "با موفقیت ساخته و ارسال شد.": "created and sent successfully.", "ناموفق بود.": "failed.",
+    "Backup بعدی": "Next Backup", "کنترل Backup و Scheduler": "Backup and Scheduler Control", "فعالیت": "Activity",
+    "تم": "Theme", "زبان": "Language", "English": "English", "فارسی": "Persian",
+    "فقط برای مدیر اصلی": "Main administrator only", "لینک ورود": "Login Link", "سرور": "Server",
+}
+
+def _translate_en(text):
+    if not text:
+        return text
+    for fa, en in sorted(EN_TRANSLATIONS.items(), key=lambda kv: len(kv[0]), reverse=True):
+        text = text.replace(fa, en)
+    text = text.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    return text
+
+def _request_lang(handler):
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
+        qlang = (query.get("lang", [""])[0] or "").lower()
+        if qlang in {"fa", "en"}:
+            return qlang
+        raw = handler.headers.get("Cookie", "")
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "idontpg_lang" and v.lower() in {"fa", "en"}:
+                return v.lower()
+    except Exception:
+        pass
+    return "fa"
+
+def _page_base(title, body, logged=True, notice="", kind="ok"):
     nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/logs">{ui_icon("activity", "drawer-icon")}<span><strong>لاگ‌ها</strong><small>ورود و فعالیت</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a>{''.join(f'<a class="drawer-link" href="{html.escape(b.get("url",""), quote=True)}" target="_blank" rel="noopener noreferrer">{ui_icon("link", "drawer-icon")}<span><strong>{html.escape(b.get("icon","🔗"))} {html.escape(b.get("name","دکمه"))}</strong><small>لینک سفارشی</small></span></a>' for b in idont_load_ui_settings().get("buttons",[]) if _safe_button_url(b.get("url","")))}<div class="drawer-theme-section"><div class="drawer-theme-title">🎨 تم‌های شخصی</div><div class="drawer-theme-grid"><button type="button" class="drawer-theme-choice" data-theme-choice="aurora">🌌 Aurora</button><button type="button" class="drawer-theme-choice" data-theme-choice="ocean">🌊 Ocean</button><button type="button" class="drawer-theme-choice" data-theme-choice="emerald">💚 Emerald</button><button type="button" class="drawer-theme-choice" data-theme-choice="sunset">🌅 Sunset</button><button type="button" class="drawer-theme-choice" data-theme-choice="rose">🌹 Rose</button><button type="button" class="drawer-theme-choice" data-theme-choice="violet">💜 Violet</button><button type="button" class="drawer-theme-choice" data-theme-choice="ruby">❤️ Ruby</button></div></div><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
     notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
     return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="idontPG backup"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/static/logo.png"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}
@@ -1786,6 +1902,36 @@ def idont_apply_ui_settings(form):
     return s
 
 
+def page(title, body, logged=True, notice="", kind="ok"):
+    out = _page_base(title, body, logged, notice, kind)
+    lang = "fa"
+    try:
+        import inspect
+        frame = inspect.currentframe()
+        caller = frame.f_back if frame else None
+        h = caller.f_locals.get("self") if caller else None
+        if h is not None and hasattr(h, "headers") and hasattr(h, "path"):
+            lang = _request_lang(h)
+    except Exception:
+        lang = "fa"
+
+    picker = '''<div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="زبان" title="زبان">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a></div></div>'''
+    if 'class="top-actions"' in out and 'id="languageToggle"' not in out:
+        out = out.replace('<div class="top-actions">', '<div class="top-actions">' + picker, 1)
+
+    css = '''<style>
+.language-picker{position:relative;display:inline-flex}.language-toggle{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}.language-menu{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:100;box-shadow:0 18px 50px rgba(0,0,0,.35)}.language-menu a{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}.language-menu a:hover{background:var(--glass2)}html[lang="en"]{direction:ltr}html[lang="en"] body{direction:ltr}html[lang="en"] .drawer{direction:ltr}html[lang="en"] .language-menu{text-align:left;right:0;left:auto}
+</style>'''
+    out = out.replace("</head>", css + "</head>", 1)
+
+    js='''<script>(function(){const b=document.getElementById("languageToggle"),m=document.getElementById("languageMenu");if(b&&m){b.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();m.hidden=!m.hidden;});document.addEventListener("click",function(e){if(!m.hidden&&!m.contains(e.target)&&e.target!==b)m.hidden=true;});}})();</script>'''
+    out = out.replace("</body>", js + "</body>", 1)
+
+    if lang == "en":
+        out = _translate_en(out)
+        out = out.replace('<html lang="fa" dir="rtl">','<html lang="en" dir="ltr">',1)
+    return out
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -1898,6 +2044,25 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/" and path.endswith("/"):
             path = path.rstrip("/")
         c = load_cfg()
+        if path == "/language":
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            lang = (query.get("lang", ["fa"])[0] or "fa").lower()
+            if lang not in {"fa", "en"}:
+                lang = "fa"
+            ref = self.headers.get("Referer", "")
+            try:
+                ref_path = urllib.parse.urlparse(ref).path or "/"
+                ref_query = urllib.parse.urlparse(ref).query
+                location = ref_path + (("?" + ref_query) if ref_query else "")
+                if not location.startswith("/") or location.startswith("//"):
+                    location = "/"
+            except Exception:
+                location = "/"
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"idontpg_lang={lang}; Max-Age=31536000; Path=/; SameSite=Lax")
+            self.send_header("Location", location)
+            self.end_headers()
+            return
         if path == "/manifest.webmanifest":
             payload=json.dumps({"name":"idontPG backup","short_name":"idontPG","start_url":"/","display":"standalone","background_color":"#06070d","theme_color":"#06070d","icons":[{"src":"/static/logo.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]},ensure_ascii=False).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type","application/manifest+json; charset=utf-8"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
