@@ -1,4 +1,4 @@
-## v5.7.0
+## v5.7.1
 
 ### New Features
 - Private per-user login logs and last-login information.
@@ -11,8 +11,8 @@
 - HTTP-only installation mode without certificate requirements.
 
 ### Improvements
-- CLI version updated to v5.7.0.
-- Web Panel version updated to v5.7.0.
+- CLI version updated to v5.7.1.
+- Web Panel version updated to v5.7.1.
 
 ## v5.6.4
 
