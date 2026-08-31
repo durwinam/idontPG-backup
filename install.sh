@@ -311,15 +311,6 @@ if ! python3 -m py_compile "${WEB_TMP}" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Functional guard: the web panel must implement POST because login/setup
-# and panel actions use POST requests. Never install a broken handler.
-if ! grep -qE '^[[:space:]]+def do_POST[[:space:]]*\(' "${WEB_TMP}"; then
-    echo -e "${RED}[!] Web Panel validation failed: do_POST() is missing.${NC}"
-    echo -e "${YELLOW}[!] Existing Web Panel was not replaced.${NC}"
-    rm -f "${WEB_TMP}"
-    exit 1
-fi
-
 install -m 700 "${WEB_TMP}" "${WEB_PANEL_PATH}"
 rm -f "${WEB_TMP}"
 

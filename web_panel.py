@@ -263,27 +263,21 @@ def send_archive(core, archive, c, caption):
         pass
 
 
-def make_backup(send=True, audit=None):
+def make_backup(send=True):
     c = load_cfg()
     core = load_core()
-    if audit is None:
-        audit = (canonical_username(c.get("username", "admin")), "scheduler/local", "Scheduler")
-    username, ip, device = audit
-    _record_activity("Backup started", "info", "backup_start", username, ip, device)
     try:
         archive = core.create_backup(bool(c.get("node", False)))
         if archive and os.path.exists(archive):
             _record_backup_created(archive)
-            _record_activity(f"Backup file created: {Path(archive).name}", "ok", "backup_success", username, ip, device)
         if not send:
-            _record_activity("Manual Backup created successfully", "ok", "backup_success", username, ip, device)
+            _record_activity("Backup دستی ساخته شد", "ok")
             return True, f"Backup ساخته شد: {archive}"
         ok, msg = send_archive(core, archive, c, f"idontPG-backup · {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        _record_activity("Backup sent to Telegram successfully" if ok else f"Backup Telegram delivery failed: {msg}", "ok" if ok else "bad", "telegram_success" if ok else "telegram_failed", username, ip, device)
-        _record_activity("Backup completed successfully" if ok else "Backup completed with Telegram delivery failure", "ok" if ok else "bad", "backup_success" if ok else "backup_failed", username, ip, device)
+        _record_activity("Backup و ارسال به Telegram موفق بود" if ok else "Backup ساخته شد ولی ارسال Telegram ناموفق بود", "ok" if ok else "bad")
         return ok, msg
     except Exception as exc:
-        _record_activity(f"Backup failed: {exc}", "bad", "backup_failed", username, ip, device)
+        _record_activity("Backup ناموفق بود", "bad")
         raise
 
 
@@ -473,59 +467,23 @@ BACKUP_HISTORY_FILES = (
     Path("/var/lib/idontPG-backup/backup_history.json"),
 )
 
-def _record_activity(message, kind="ok", event="activity", username="", ip="", device=""):
-    """Persist a rolling audit log for this server/panel.
-
-    Dashboard keeps showing only the latest three activities, while the Logs
-    page can inspect the larger audit trail.  Entries are intentionally tied
-    to the current local panel account when available.
-    """
+def _record_activity(message, kind="ok"):
+    """Keep a tiny rolling activity history for the dashboard."""
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         items = []
         if ACTIVITY_FILE.is_file():
             try:
-                raw = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
-                if isinstance(raw, list): items = raw
+                items = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
+                if not isinstance(items, list): items = []
             except Exception:
                 items = []
-        items.insert(0, {
-            "time": time.time(),
-            "message": str(message),
-            "kind": str(kind),
-            "event": str(event),
-            "username": str(username or ""),
-            "ip": str(ip or ""),
-            "device": str(device or ""),
-        })
-        ACTIVITY_FILE.write_text(json.dumps(items[:200], ensure_ascii=False), encoding="utf-8")
+        items.insert(0, {"time": time.time(), "message": str(message), "kind": str(kind)})
+        ACTIVITY_FILE.write_text(json.dumps(items[:3], ensure_ascii=False), encoding="utf-8")
         try: ACTIVITY_FILE.chmod(0o600)
         except OSError: pass
     except Exception:
         pass
-
-def _request_context(handler):
-    """Return audit context without storing cookies/tokens/passwords."""
-    try:
-        sid = handler.sid()
-        info = SESSIONS.get(sid, {}) if sid else {}
-        c = load_cfg()
-        return (
-            canonical_username(info.get("username") or c.get("username", "admin")),
-            str(handler.client_address[0] if handler.client_address else "unknown"),
-            _login_device(handler.headers.get("User-Agent", "")),
-        )
-    except Exception:
-        return ("admin", "unknown", "Unknown · Browser")
-
-def get_all_activities():
-    try:
-        if ACTIVITY_FILE.is_file():
-            raw = json.loads(ACTIVITY_FILE.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, list) else []
-    except Exception:
-        pass
-    return []
 
 LOGIN_LOG_FILE = STATE_DIR / "login_logs.json"
 
@@ -567,15 +525,13 @@ def get_login_logs():
     return []
 
 def _notify_login_telegram(c, ip, username):
-    if not c.get("token") or not c.get("chat"):
-        return False, "Telegram is not configured"
+    if not c.get("token") or not c.get("chat"): return
     try:
-        params={"chat_id":c["chat"],"text":f"🔐 idontPG-backup\nSuccessful panel login\n👤 {username}\n🌐 IP: {ip}\n🕐 {time.strftime('%Y-%m-%d %H:%M:%S')}"}
+        params={"chat_id":c["chat"],"text":f"🔐 idontPG-backup\nورود موفق به پنل\n👤 {username}\n🌐 IP: {ip}\n🕐 {time.strftime('%Y-%m-%d %H:%M:%S')}"}
         topic=normalize_topic_id(c.get("topic",""))
         if topic: params["message_thread_id"]=int(topic)
-        return telegram_request(c["token"],"sendMessage",params,c.get("proxy") or None,20)
-    except Exception as exc:
-        return False, str(exc)
+        telegram_request(c["token"],"sendMessage",params,c.get("proxy") or None,20)
+    except Exception: pass
 
 def get_recent_activities():
     """Return up to five recent dashboard activities."""
@@ -1546,38 +1502,6 @@ body.light:before,body.light:after{opacity:.55}body:before,body:after{content:""
 .theme-aurora{--bg:#07111b;--glass:rgba(8,25,39,.68);--glass2:rgba(34,211,238,.08);--line:rgba(103,232,249,.18);--text:#e8fbff;--muted:#8fb8c5;--accent:#8b5cf6;--accent2:#22d3ee}.theme-ocean{--bg:#041018;--glass:rgba(4,28,38,.7);--glass2:rgba(45,212,191,.08);--line:rgba(45,212,191,.18);--text:#e7fffb;--muted:#8bbcb8;--accent:#0ea5e9;--accent2:#2dd4bf}.theme-emerald{--bg:#06110b;--glass:rgba(7,29,18,.7);--glass2:rgba(34,197,94,.08);--line:rgba(74,222,128,.18);--text:#ecfff2;--muted:#91b5a0;--accent:#22c55e;--accent2:#34d399}.theme-sunset{--bg:#160a06;--glass:rgba(42,18,10,.7);--glass2:rgba(251,146,60,.08);--line:rgba(251,146,60,.2);--text:#fff5ed;--muted:#c7a897;--accent:#f97316;--accent2:#fb7185}.theme-rose{--bg:#14070d;--glass:rgba(39,11,24,.7);--glass2:rgba(244,63,94,.08);--line:rgba(251,113,133,.2);--text:#fff1f5;--muted:#c8a0ad;--accent:#f43f5e;--accent2:#ec4899}.theme-violet{--bg:#0c0716;--glass:rgba(27,13,49,.7);--glass2:rgba(168,85,247,.08);--line:rgba(192,132,252,.2);--text:#faf5ff;--muted:#b8a8ca;--accent:#a855f7;--accent2:#8b5cf6}.theme-ruby{--bg:#120608;--glass:rgba(43,10,15,.7);--glass2:rgba(248,113,113,.08);--line:rgba(248,113,113,.2);--text:#fff4f4;--muted:#c5a0a0;--accent:#ef4444;--accent2:#f97316}.status{display:inline-flex;align-items:center;gap:7px;font-size:11px;padding:7px 10px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
 .status-dot{display:inline-block!important;position:relative!important;box-sizing:border-box!important;flex:0 0 10px!important;width:10px!important;min-width:10px!important;max-width:10px!important;height:10px!important;min-height:10px!important;max-height:10px!important;padding:0!important;margin:0!important;border:0!important;border-radius:50%!important;overflow:visible!important;vertical-align:middle!important;align-self:center!important;background:#43e6a0!important;opacity:1!important;transform:translateZ(0);will-change:transform,opacity,box-shadow;animation:statusBreath 1.6s ease-in-out infinite!important}.status-dot::after{content:none!important}.status-dot.status-ok{background:#43e6a0!important;color:#43e6a0!important}.status-dot.status-info{background:#58cfff!important;color:#58cfff!important}.status-dot.status-warn{background:#ffd45a!important;color:#ffd45a!important}.status-dot.status-bad{background:#ff526f!important;color:#ff526f!important}.status-dot.status-off{background:#8b96ad!important;color:#8b96ad!important;box-shadow:none!important;animation:none!important}.logo-fallback-text{display:none;font-weight:900;font-size:16px;letter-spacing:-.5px;color:#8fdcff;text-shadow:0 0 12px #6ee7ff}.logo-fallback .logo-fallback-text{display:block}.logo-fallback img{display:none!important}.panel-brand-icon{position:relative}.panel-brand-icon:after{display:none!important}.status.status-ok .status-dot{animation:statusBreath 1.6s ease-in-out infinite!important}.status.status-bad .status-dot{animation:statusBreath 1.6s ease-in-out infinite!important}.status.status-warn .status-dot{animation:statusBreath 1.6s ease-in-out infinite!important}.status.status-info .status-dot{animation:statusBreath 1.6s ease-in-out infinite!important}.status.status-ok{color:#8ff0c2;background:rgba(67,227,154,.075);border-color:rgba(67,227,154,.20)}.status.status-info{color:#9ed4ff;background:rgba(97,183,255,.075);border-color:rgba(97,183,255,.20)}.status.status-warn{color:#ffe58d;background:rgba(255,212,92,.075);border-color:rgba(255,212,92,.20)}.status.status-bad{color:#ff9aad;background:rgba(255,94,120,.075);border-color:rgba(255,94,120,.20)}.status.status-off{color:var(--muted);background:rgba(124,138,165,.055);border-color:var(--line)}
 @keyframes statusBreath{0%,100%{opacity:.72;filter:brightness(.92);box-shadow:0 0 2px currentColor,0 0 5px currentColor}50%{opacity:1;filter:brightness(1.35);box-shadow:0 0 4px currentColor,0 0 9px currentColor}}
-/* v5.7.0 mobile stability + personal theme polish */
-body.theme-aurora{background:radial-gradient(circle at 12% 14%,rgba(139,92,246,.28),transparent 32%),radial-gradient(circle at 88% 18%,rgba(34,211,238,.22),transparent 30%),linear-gradient(145deg,#06101a,#071525 48%,#090615)}
-body.theme-ocean{background:radial-gradient(circle at 8% 12%,rgba(14,165,233,.28),transparent 30%),radial-gradient(circle at 90% 20%,rgba(45,212,191,.24),transparent 32%),linear-gradient(145deg,#031017,#041b22 50%,#06151b)}
-body.theme-emerald{background:radial-gradient(circle at 10% 10%,rgba(34,197,94,.22),transparent 30%),radial-gradient(circle at 90% 22%,rgba(52,211,153,.20),transparent 32%),linear-gradient(145deg,#041009,#061b10 50%,#050b08)}
-body.theme-sunset{background:radial-gradient(circle at 12% 10%,rgba(249,115,22,.28),transparent 30%),radial-gradient(circle at 88% 20%,rgba(251,113,133,.20),transparent 30%),linear-gradient(145deg,#120705,#241007 52%,#10070a)}
-body.theme-rose{background:radial-gradient(circle at 12% 12%,rgba(244,63,94,.25),transparent 30%),radial-gradient(circle at 88% 18%,rgba(236,72,153,.25),transparent 32%),linear-gradient(145deg,#12050b,#240812 52%,#0e050c)}
-body.theme-violet{background:radial-gradient(circle at 12% 12%,rgba(168,85,247,.30),transparent 31%),radial-gradient(circle at 88% 18%,rgba(139,92,246,.23),transparent 30%),linear-gradient(145deg,#090511,#160822 52%,#09050e)}
-body.theme-ruby{background:radial-gradient(circle at 12% 12%,rgba(239,68,68,.28),transparent 30%),radial-gradient(circle at 88% 20%,rgba(249,115,22,.20),transparent 30%),linear-gradient(145deg,#100406,#21070b 52%,#0c0506)}
-body.theme-aurora .glass,body.theme-ocean .glass,body.theme-emerald .glass,body.theme-sunset .glass,body.theme-rose .glass,body.theme-violet .glass,body.theme-ruby .glass{background:linear-gradient(145deg,color-mix(in srgb,var(--glass) 92%,var(--accent) 8%),color-mix(in srgb,var(--glass2) 78%,transparent));border-color:color-mix(in srgb,var(--line) 90%,var(--accent2) 10%);box-shadow:0 24px 70px color-mix(in srgb,var(--accent) 10%,transparent),inset 0 1px 0 rgba(255,255,255,.055)}
-body.theme-aurora .gradient,body.theme-ocean .gradient,body.theme-emerald .gradient,body.theme-sunset .gradient,body.theme-rose .gradient,body.theme-violet .gradient,body.theme-ruby .gradient{background:linear-gradient(90deg,var(--text),var(--accent2),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
-body.theme-aurora .btn.primary,body.theme-ocean .btn.primary,body.theme-emerald .btn.primary,body.theme-sunset .btn.primary,body.theme-rose .btn.primary,body.theme-violet .btn.primary,body.theme-ruby .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 12px 32px color-mix(in srgb,var(--accent) 24%,transparent)}
-body.theme-aurora .theme-toggle,body.theme-ocean .theme-toggle,body.theme-emerald .theme-toggle,body.theme-sunset .theme-toggle,body.theme-rose .theme-toggle,body.theme-violet .theme-toggle,body.theme-ruby .theme-toggle{border-color:color-mix(in srgb,var(--accent2) 32%,var(--line));box-shadow:0 0 24px color-mix(in srgb,var(--accent) 12%,transparent)}
-.drawer-theme-choice{position:relative;overflow:hidden;transition:transform .2s ease,border-color .2s ease,background .2s ease,box-shadow .2s ease}.drawer-theme-choice:after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.08),transparent 80%);transform:translateX(-120%);transition:.45s}.drawer-theme-choice:hover:after{transform:translateX(120%)}.drawer-theme-choice.active{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,transparent),color-mix(in srgb,var(--accent2) 12%,transparent));transform:translateY(-1px)}
-@media(max-width:800px){
-  html,body{width:100%;max-width:100%;overflow-x:hidden}
-  .container{width:calc(100% - 22px);max-width:none;margin:0 auto}
-  .topbar{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;overflow:visible}
-  .brand{min-width:0;max-width:100%;overflow:hidden;gap:10px}
-  .brand-logo{width:48px;height:48px;flex:0 0 48px;border-radius:14px}
-  .brand h1{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .brand p{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .top-actions{grid-column:2;grid-row:1;display:flex;align-items:center;gap:7px;min-width:max-content}
-  .top-actions .theme-picker{order:0}.top-actions .menu-toggle{order:1}
-  .theme-menu{right:0;top:48px;min-width:148px}
-  .hero h2{font-size:clamp(27px,9vw,40px);letter-spacing:-1px}
-  .glass{width:100%;max-width:100%;overflow:hidden}
-  .field input,.field select,.btn{max-width:100%;min-width:0}
-  .meta-row{gap:8px}
-  .meta-row span:last-child,.meta-row strong,.meta-row a{max-width:58%;font-size:11px}
-  .drawer{max-width:min(330px,88vw)}
-}
-
 
 
 .has-status{overflow:visible!important}
@@ -1626,137 +1550,10 @@ def ui_theme_css():
 body.custom .container{{width:min(var(--theme-width),calc(100% - 34px))}}body.custom .grid{{gap:var(--theme-gap)}}body.custom .glass{{color:var(--text);background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--glass2) 55%,transparent))!important;border-color:var(--line)!important;border-radius:var(--theme-radius)!important;backdrop-filter:blur(var(--theme-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--theme-blur)) saturate(145%)}}
 body.custom .meta-row,body.custom .resource-stat,body.custom .chart-bar,body.custom .theme-toggle,body.custom .menu-toggle{{background:var(--glass2);border-color:var(--line);color:var(--text)}}body.custom .drawer{{background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--accent) 12%,var(--glass)))!important;border-color:var(--line)!important}}body.custom .drawer-link{{color:var(--text);background:var(--glass2);border-color:transparent}}body.custom .drawer-link:hover{{border-color:var(--accent2)}}body.custom .title,body.custom .brand h1,body.custom .field label,body.custom .field input,body.custom .field select{{color:var(--text)}}body.custom .sub,body.custom .empty,body.custom .hint,body.custom .pill,body.custom .brand p,body.custom .footer,body.custom .meta-label,body.custom .updated,body.custom .legend,body.custom .drawer-link small{{color:var(--muted)}}body.custom .gradient{{background:linear-gradient(90deg,var(--text),var(--accent2),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}}body.custom .btn.primary{{background:linear-gradient(135deg,var(--accent),var(--accent2))!important;color:#fff!important;box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 35%,transparent)!important}}body.custom .btn:not(.primary){{background:var(--glass2);color:var(--text);border-color:var(--line)}}body.custom .field input,body.custom .field select,body.custom textarea{{background:var(--glass2);color:var(--text);border-color:var(--line)}}body.custom .neo-icon{{color:var(--accent2);background:linear-gradient(145deg,color-mix(in srgb,var(--accent2) 13%,transparent),color-mix(in srgb,var(--accent) 18%,transparent))!important;border-color:var(--line)!important}}body.custom .resource-plot{{background:linear-gradient(145deg,var(--glass),color-mix(in srgb,var(--pink) 10%,var(--glass)))!important;border-color:var(--line)!important}}body.custom .theme-toggle:hover,body.custom .menu-toggle:hover{{border-color:var(--accent2);box-shadow:0 10px 30px color-mix(in srgb,var(--accent2) 18%,transparent)}}body.custom .aurora .o1{{background:var(--accent)}}body.custom .aurora .o2{{background:var(--accent2)}}body.custom .aurora .o3{{background:var(--pink)}}body.custom .glass,body.custom .card{{box-shadow:0 24px 70px var(--shadow-color)}}body.custom .card:hover{{box-shadow:0 28px 90px var(--shadow-color)}}body.custom{{font-size:var(--theme-font)}}'''
 
-
-# ---------------------------------------------------------------------------
-# Lightweight UI language layer
-# ---------------------------------------------------------------------------
-# The panel historically renders Persian strings directly in the Python
-# templates.  To avoid rewriting the stable UI structure, English is applied
-# as a presentation layer to the final HTML.  This keeps routes, forms and
-# existing custom UI settings compatible while making the English interface
-# completely LTR and free of Persian UI labels.
-EN_TRANSLATIONS = {
-    "Bot Token و Chat ID الزامی هستند.": "Bot Token and Chat ID are required.",
-    "Topic ID نامعتبر است. فقط عدد message_thread_id یا لینک Topic تلگرام را وارد کنید.": "Invalid Topic ID. Enter a message_thread_id number or a Telegram Topic link.",
-    "فایل Backup ساخته نشد.": "Backup file could not be created.",
-    "تقسیم فایل بزرگ برای Telegram در هسته Backup در دسترس نیست.": "Large-file splitting for Telegram is not available in the Backup core.",
-    "ارسال قسمت {i} ناموفق بود: {msg}": "Part {i} failed to send: {msg}",
-    "Backup در {len(chunks)} قسمت ارسال شد.": "Backup was sent in {len(chunks)} parts.",
-    "Backup دستی ساخته شد": "Manual Backup created",
-    "Backup ساخته شد: {archive}": "Backup created: {archive}",
-    "Backup و ارسال به Telegram موفق بود": "Backup and Telegram delivery succeeded",
-    "Backup ساخته شد ولی ارسال Telegram ناموفق بود": "Backup was created, but Telegram delivery failed",
-    "Backup ناموفق بود": "Backup failed",
-    "ورود موفق به پنل\\n👤 {username}\\n🌐 IP: {ip}\\n🕐 {time.strftime(": "Successful panel login\\n👤 {username}\\n🌐 IP: {ip}\\n🕐 {time.strftime(\"",
-    "همین الان": "Just now", "دقیقه پیش": "minutes ago", "ساعت پیش": "hours ago", "روز پیش": "days ago",
-    "هنوز Backup ساخته نشده": "No Backup has been created yet.",
-    "قابل دریافت نیست": "Unavailable",
-    "وضعیت لحظه‌ای سرور": "Live Server Status",
-    "نمودار لحظه‌ای منابع سرور": "Live Server Resource Chart",
-    "اکنون": "Now", "به‌روزرسانی:": "Updated:",
-    "در حال اجرا": "Running", "تنظیم شده": "Configured", "تنظیم نشده": "Not configured",
-    "فعال": "Active", "متوقف": "Stopped", "استفاده": "Usage",
-    "بستن منو": "Close menu", "منوی اصلی": "Main Menu", "داشبورد": "Dashboard", "نمای کلی سیستم": "System overview",
-    "بکاپ تلگرام": "Telegram Backup", "تنظیمات و ارسال": "Settings and delivery",
-    "تنظیمات بکاپ": "Backup Settings", "تنظیمات و Backup": "Settings and Backup",
-    "Scheduler و Backup": "Scheduler & Backup",
-    "تست تلگرام": "Telegram Test", "بررسی اتصال": "Connection check",
-    "لاگ‌ها": "Logs", "ورود و فعالیت": "Login and activity", "حساب کاربری": "Account", "مدیریت ورود": "Login management",
-    "دکمه": "Button", "لینک سفارشی": "Custom link", "تم‌های شخصی": "Personal Themes", "خروج": "Logout", "پایان نشست": "End session",
-    "باز کردن منو": "Open menu", "منو": "Menu", "انتخاب تم": "Choose theme", "روز": "Day",
-    "اطلاعات بکاپ": "Backup Information", "حجم مصرفی": "Data Usage", "فعالیت‌های اخیر": "Recent Activity",
-    "مدیریت IDONT": "IDONT Administration", "تنظیمات از کد اصلی جدا ذخیره می‌شوند": "Settings are stored separately from the core code.",
-    "بازگشت": "Back", "نام پنل": "Panel Name", "تعداد فعالیت‌های اخیر": "Recent Activity Count", "اندازه فونت": "Font Size",
-    "نمایش بخش‌ها": "Visible Sections", "بکاپ": "Backup", "آمار سرور": "Server Statistics", "ظاهر": "Appearance",
-    "رنگ اصلی": "Primary Color", "رنگ دوم": "Secondary Color", "عرض Logo": "Logo Width", "شدت Glow": "Glow Strength",
-    "وضعیت": "Status", "آیکون": "Icon", "رنگ": "Color", "سرعت": "Speed", "متن‌ها": "Text",
-    "عنوان داشبورد": "Dashboard Title", "عنوان بکاپ": "Backup Title", "عنوان حجم مصرفی": "Usage Title", "عنوان فعالیت‌های اخیر": "Recent Activity Title",
-    "افزودن دکمه": "Add Button", "نام": "Name", "لینک": "Link", "دکمه‌های فعلی": "Current Buttons", "ذخیره تغییرات": "Save Changes",
-    "غیرفعال": "Inactive", "هشدار": "Warning", "اطلاعات": "Information",
-    "مدیریت خصوصی": "Private Administration", "این بخش فقط برای مدیر اصلی است.": "This area is for the main administrator only.",
-    "نام کاربری ادمین": "Admin Username", "رمز ادمین": "Admin Password", "ورود به مدیریت": "Admin Login",
-    "ورود به پنل": "Panel Login", "برای ورود، نام کاربری و رمز عبور ادمین را وارد کنید.": "Enter your admin username and password to sign in.",
-    "نام کاربری": "Username", "رمز عبور": "Password", "ورود امن ←": "Secure Login →",
-    "راه‌اندازی اولیه": "Initial Setup", "برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.": "Protect the panel by creating a username of 5–32 characters and a password of at least 8 characters with at least 2 letters, 1 number, and one of # @ *.",
-    "تکرار رمز": "Confirm Password", "ساخت حساب و ورود": "Create Account & Sign In",
-    "مرکز مدیریت": "Administration Center", "شخصی‌سازی کامل ظاهر، داشبورد و اجزای وب‌پنل.": "Fully customize the appearance, dashboard, and web panel components.",
-    "شخصی‌سازی": "Customization", "شش تم آماده": "Six Preset Themes", "کاربر عادی هیچ گزینه‌ای برای انتخاب تم نمی‌بیند.": "Regular users do not see administrator theme controls.",
-    "پس‌زمینه": "Background", "شفافیت Glass": "Glass Opacity", "گردی کارت": "Card Radius", "Glow و حرکت": "Glow & Motion",
-    "سرعت انیمیشن": "Animation Speed", "متن و برند": "Text & Branding", "کنترل کامل Backup": "Complete Backup Control", "توضیح داشبورد": "Dashboard Description",
-    "عنوان Backup": "Backup Title", "عنوان مصرف": "Usage Title", "عنوان فعالیت": "Activity Title", "چیدمان و تجربه کاربر": "Layout & User Experience",
-    "عرض محتوای داشبورد": "Dashboard Content Width", "فاصله بین کارت‌ها": "Card Spacing", "شدت سایه کارت": "Card Shadow Strength", "عنوان کوچک زیر برند": "Brand Subtitle",
-    "بخش‌های داشبورد": "Dashboard Sections", "فعالیت‌ها": "Activity", "تعداد فعالیت‌ها": "Activity Count", "دکمه سفارشی": "Custom Button", "ذخیره همه تغییرات": "Save All Changes",
-    "همه‌چیز برای مدیریت Backup، ارسال به Telegram و زمان‌بندی خودکار، داخل یک پنل شیشه‌ای و سریع.": "Everything for Backup management, Telegram delivery, and scheduling in one fast glass panel.",
-    "اطلاعات Backup": "Backup Information", "تعداد Backup": "Backup Count", "حجم کل Backupها": "Total Backup Size", "آخرین Backup": "Latest Backup",
-    "اطلاعات پنل": "Panel Information", "آنلاین": "Online", "آفلاین": "Offline", "لینک پنل": "Panel Link", "وضعیت پنل": "Panel Status",
-    "مصرف واقعی Node": "Node Usage", "دریافت مستقیم از PasarGuard Node": "Read directly from PasarGuard Node", "بازه": "Interval", "ساعت": "Hours",
-    "تنظیمات Telegram": "Telegram Settings", "ارسال تست": "Send Test", "تنظیمات Backup": "Backup Settings",
-    "زمان‌بندی را روشن/خاموش کنید، Backup دستی بگیرید یا مشخص کنید PG-Node هم همراه Backup ذخیره شود.": "Enable or disable scheduling, create a manual Backup, or include PG-Node with the Backup.",
-    "مدیریت Backup": "Backup Manager", "دستی": "Manual", "ارسال تست پیام به Telegram": "Send a test message to Telegram", "قبل از فعال‌کردن Scheduler اتصال را بررسی کنید.": "Check the connection before enabling the Scheduler.",
-    "ارسال پیام تست": "Send Test Message", "با Chat ID و Topic فعلی ارسال می‌شود.": "Sent using the current Chat ID and Topic.", "بعدی": "Next", "زمان باقی‌مانده": "Time Remaining", "وضعیت Scheduler": "Scheduler Status",
-    "آخرین فعالیت‌ها": "Latest Activity", "هنوز فعالیتی ثبت نشده.": "No activity has been recorded yet.", "سلامت بکاپ و سرویس‌ها": "Backup & Service Health",
-    "فضای دیسک": "Disk Space", "استفاده‌شده": "Used", "آزاد": "Free", "هفت روز اخیر": "Last 7 Days", "مدیریت Backupها": "Manage Backups",
-    "منابع سرور مجازی": "Virtual Server Resources", "پایش لحظه‌ای": "Live Monitoring", "دانلود": "Download", "حذف": "Delete",
-    "هنوز Backupای پیدا نشد.": "No Backup was found.", "دانلود مستقیم Backup": "Direct Backup Download", "حذف Backup": "Delete Backup",
-    "قدیمی دیگری وجود ندارد.": "No other older Backups.", "آخرین Backup ذخیره‌شده یا ارسال‌شده به Telegram همیشه در بالای این بخش قرار می‌گیرد.": "The latest saved or Telegram-delivered Backup always appears at the top of this section.",
-    "۳ Backup اخیر": "3 Recent Backups", "ساخت Backup جدید": "Create New Backup", "پیدا نشد.": "Not found.", "خواندن Backup ناموفق بود.": "Failed to read Backup.",
-    "نام کاربری و رمز ورود را مدیریت کنید.": "Manage your username and login password.", "فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.": "Only letters, numbers, and hyphens; 5–32 characters.",
-    "رمز عبور جدید": "New Password", "برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.": "Enter at least 8 characters to change the password. Leave this field empty if you do not want to change it.",
-    "تکرار رمز جدید": "Confirm New Password", "مشاهده لاگ‌ها": "View Logs", "آخرین ورود": "Last Login", "آخرین ورود موفق": "Last Successful Login", "زمان": "Time", "دستگاه / مرورگر": "Device / Browser",
-    "اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.": "Configure the bot, destination, Topic, proxy, and schedule; then start the Scheduler.",
-    "توکن BotFather را وارد کنید.": "Enter the BotFather token.", "شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.": "Enter the Topic number; a Telegram Topic link is also accepted.", "اختیاری. اگر Proxy ندارید خالی بگذارید.": "Optional. Leave empty if you do not use a proxy.",
-    "ذخیره تنظیمات": "Save Settings", "تست اتصال": "Test Connection", "برگشت": "Back",
-    "تنظیمات": "Settings", "کنترل Scheduler و اجرای Backup دستی.": "Control the Scheduler and run a manual Backup.", "زمان‌بندی خودکار": "Automatic Schedule", "بازه Backup (ساعت)": "Backup Interval (hours)",
-    "شامل PG-Node شود": "Include PG-Node", "ذخیره و شروع": "Save & Start", "توقف": "Stop", "همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.": "Create a full Backup now and send it to the current Telegram destination.",
-    "شروع Backup دستی": "Start Manual Backup", "تست": "Test", "یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.": "A test message will be sent using the current settings.", "بدون Proxy": "No Proxy",
-    "فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.": "Only the login history for this account is shown.", "هنوز لاگی برای این حساب ثبت نشده.": "No login logs have been recorded for this account.",
-    "صفحه پیدا نشد.": "Page not found.", "راه‌اندازی اولیه قبلاً انجام شده است.": "Initial setup has already been completed.", "تلاش دوباره": "Try Again",
-    "نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.": "Username must be 5–32 characters and contain only letters, numbers, or hyphens.",
-    "رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.": "Password must be at least 8 characters and include at least 2 letters, 1 number, and one of # @ *.",
-    "تکرار رمز عبور با رمز جدید یکسان نیست.": "Password confirmation does not match the new password.", "ورود موفق به پنل از {login_ip}": "Successful panel login from {login_ip}", "ورود با موفقیت انجام شد": "Login successful",
-    "نام کاربری یا رمز عبور اشتباه است.": "Incorrect username or password.", "تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید.": "Too many attempts; try again in 15 minutes.", "نام کاربری یا رمز ادمین اشتباه است.": "Incorrect admin username or password.",
-    "ورود مدیر از {ip}": "Administrator login from {ip}", "ورود مدیر با موفقیت انجام شد": "Administrator login successful", "درخواست نامعتبر است.": "Invalid request.",
-    "تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.": "Settings saved successfully and applied to the entire web panel.", "بازگشت به مدیریت": "Back to Administration",
-    "ذخیره تنظیمات ناموفق بود: {html.escape(str(exc))}": "Failed to save settings: {html.escape(str(exc))}", "درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.": "Invalid or expired request. Reload the page and try again.",
-    "رمز جدید باید حداقل ۸ کاراکتر، شامل حروف انگلیسی، حداقل یک حرف بزرگ، یک عدد و یک کاراکتر ویژه باشد.": "New password must be at least 8 characters and include letters, at least one uppercase letter, one number, and one special character.",
-    "تنظیمات حساب با موفقیت ذخیره شد.": "Account settings saved successfully.", "تنظیمات Telegram با موفقیت ذخیره شد.": "Telegram settings saved successfully.", "برگشت به Telegram": "Back to Telegram",
-    "پیام تست با موفقیت ارسال شد.": "Test message sent successfully.", "ارسال پیام تست ناموفق بود.": "Failed to send test message.", "ذخیره و شروع شد.": "Saved and started.", "ذخیره شد ولی شروع آن با خطا مواجه شد.": "Saved, but starting it failed.",
-    "متوقف شد": "Stopped", "حذف شد: {requested}": "Deleted: {requested}", "حذف Backup ناموفق بود: {html.escape(str(exc))}": "Failed to delete Backup: {html.escape(str(exc))}",
-    "با موفقیت ساخته و ارسال شد.": "created and sent successfully.", "ناموفق بود.": "failed.",
-    "Backup بعدی": "Next Backup", "کنترل Backup و Scheduler": "Backup and Scheduler Control", "فعالیت": "Activity",
-    "تم": "Theme", "زبان": "Language", "English": "English", "فارسی": "Persian",
-    "فقط برای مدیر اصلی": "Main administrator only", "لینک ورود": "Login Link", "سرور": "Server",
-}
-
-def _translate_en(text):
-    if not text:
-        return text
-    # Longest first prevents shorter phrases from partially consuming a full label.
-    for fa, en in sorted(EN_TRANSLATIONS.items(), key=lambda kv: len(kv[0]), reverse=True):
-        text = text.replace(fa, en)
-    # Persian UI numerals are not desirable in the English interface.
-    text = text.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
-    return text
-
-def _request_lang(handler):
-    try:
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query)
-        qlang = (query.get("lang", [""])[0] or "").lower()
-        if qlang in {"fa", "en"}:
-            return qlang
-        raw = handler.headers.get("Cookie", "")
-        for part in raw.split(";"):
-            k, _, v = part.strip().partition("=")
-            if k == "idontpg_lang" and v.lower() in {"fa", "en"}:
-                return v.lower()
-    except Exception:
-        pass
-    return "fa"
-
 def page(title, body, logged=True, notice="", kind="ok"):
     nav = "" if not logged else f'''<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer" id="drawer" aria-hidden="true"><div class="drawer-head"><img class="drawer-logo" src="/static/logo.png" alt="idontPG-backup"><div><h3>{html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</h3><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div><button class="drawer-close" id="drawerClose" type="button" aria-label="بستن منو">×</button></div><div class="drawer-section">منوی اصلی</div><nav class="drawer-nav"><a class="drawer-link" href="/">{ui_icon("dashboard", "drawer-icon")}<span><strong>داشبورد</strong><small>نمای کلی سیستم</small></span></a><a class="drawer-link" href="/telegram">{ui_icon("telegram", "drawer-icon")}<span><strong>بکاپ تلگرام</strong><small>تنظیمات و ارسال</small></span></a><a class="drawer-link" href="/backup-settings">{ui_icon("settings", "drawer-icon")}<span><strong>تنظیمات بکاپ</strong><small>Scheduler و Backup</small></span></a><a class="drawer-link" href="/test">{ui_icon("test", "drawer-icon")}<span><strong>تست تلگرام</strong><small>بررسی اتصال</small></span></a><a class="drawer-link" href="/logs">{ui_icon("activity", "drawer-icon")}<span><strong>لاگ‌ها</strong><small>ورود و فعالیت</small></span></a><a class="drawer-link" href="/account">{ui_icon("account", "drawer-icon")}<span><strong>حساب کاربری</strong><small>مدیریت ورود</small></span></a>{''.join(f'<a class="drawer-link" href="{html.escape(b.get("url",""), quote=True)}" target="_blank" rel="noopener noreferrer">{ui_icon("link", "drawer-icon")}<span><strong>{html.escape(b.get("icon","🔗"))} {html.escape(b.get("name","دکمه"))}</strong><small>لینک سفارشی</small></span></a>' for b in idont_load_ui_settings().get("buttons",[]) if _safe_button_url(b.get("url","")))}<div class="drawer-theme-section"><div class="drawer-theme-title">🎨 تم‌های شخصی</div><div class="drawer-theme-grid"><button type="button" class="drawer-theme-choice" data-theme-choice="aurora">🌌 Aurora</button><button type="button" class="drawer-theme-choice" data-theme-choice="ocean">🌊 Ocean</button><button type="button" class="drawer-theme-choice" data-theme-choice="emerald">💚 Emerald</button><button type="button" class="drawer-theme-choice" data-theme-choice="sunset">🌅 Sunset</button><button type="button" class="drawer-theme-choice" data-theme-choice="rose">🌹 Rose</button><button type="button" class="drawer-theme-choice" data-theme-choice="violet">💜 Violet</button><button type="button" class="drawer-theme-choice" data-theme-choice="ruby">❤️ Ruby</button></div></div><a class="drawer-link logout" href="/logout">{ui_icon("rocket", "drawer-icon")}<span><strong>خروج</strong><small>پایان نشست</small></span></a></nav></aside>'''
     notice_html = f'<div class="notice {kind}">{html.escape(notice)}</div>' if notice else ""
-    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="idontPG backup"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/static/logo.png"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}.language-picker{{position:relative}}.language-toggle{{width:44px;height:44px;border:1px solid var(--line);border-radius:14px;background:var(--glass2);color:var(--text);cursor:pointer;font-weight:900;font-size:17px;box-shadow:0 0 20px rgba(34,211,238,.08)}}.language-menu{{position:absolute;right:0;top:50px;min-width:150px;padding:7px;border:1px solid var(--line);border-radius:16px;background:rgba(10,12,22,.96);backdrop-filter:blur(18px);z-index:80;box-shadow:0 18px 50px rgba(0,0,0,.35)}}.language-menu a{{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:11px;color:var(--text);text-decoration:none;font-size:12px;font-weight:800}}.language-menu a:hover{{background:var(--glass2)}}html[lang="en"]{{direction:ltr}}html[lang="en"] body{{direction:ltr}}html[lang="en"] .language-menu{{right:0;left:auto}}html[lang="en"] .drawer{{direction:ltr}}html[lang="en"] .meta-row{{direction:ltr}}html[lang="en"] .language-menu a{{text-align:left}}.language-menu a{{cursor:pointer}}
+    return f'''<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06070d"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="idontPG backup"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/static/logo.png"><title>{html.escape(title)} · {html.escape(str(idont_load_ui_settings().get("site_name", APP)))}</title><style>{CSS}{ui_theme_css()}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{{outline:2px solid #67e8f9;outline-offset:3px}}
 
 /* v5.5.0 UI polish: clearer controls, focus states and responsive spacing */
 .btn, button, input[type="submit"] {{
@@ -1782,7 +1579,7 @@ def page(title, body, logged=True, notice="", kind="ok"):
   .btn, button, input[type="submit"] {{ width: 100%; }}
 }}
 .backup-row{{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}}.backup-row:last-child{{border-bottom:0}}.latest-backup-box{{padding:18px;border:1px solid rgba(139,92,246,.30);border-radius:20px;background:linear-gradient(145deg,rgba(139,92,246,.12),rgba(34,211,238,.055) 55%,rgba(236,72,153,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 18px 45px rgba(0,0,0,.12)}}.latest-backup-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}}.latest-backup-head strong{{display:block;font-size:15px;word-break:break-all;margin:3px 0 5px}}.latest-kicker{{display:block;font-size:9px;letter-spacing:1.7px;color:#67e8f9;font-weight:900}}.latest-badge{{white-space:nowrap;font-size:10px;font-weight:900;padding:7px 10px;border-radius:999px;background:rgba(34,211,238,.10);border:1px solid rgba(34,211,238,.22);color:#67e8f9}}.latest-backup-actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}}.latest-backup-actions form{{margin:0}}.older-backups{{margin-top:18px}}.section-label{{font-size:11px;font-weight:900;color:var(--muted);margin-bottom:8px}}.older-backups .backup-row:first-of-type{{border-top:1px solid var(--line)}}
-.logs-list{{display:grid;gap:10px}}.log-entry{{padding:14px 15px;border:1px solid var(--line);border-radius:17px;background:rgba(255,255,255,.035);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}}.log-entry.log-ok{{border-color:rgba(52,211,153,.20)}}.log-entry.log-bad{{border-color:rgba(251,113,133,.24)}}.log-entry.log-warn{{border-color:rgba(255,212,92,.20)}}.log-main{{display:flex;align-items:center;gap:11px;min-width:0}}.log-icon{{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:12px;background:var(--glass2);font-size:18px}}.log-copy{{min-width:0;flex:1}}.log-copy strong{{display:block;font-size:12px;line-height:1.55;overflow-wrap:anywhere}}.log-copy small{{display:block;margin-top:4px;color:var(--muted);font-size:10px;overflow-wrap:anywhere}}.log-status{{flex:0 0 auto;font-size:9px;font-weight:900;letter-spacing:.8px;padding:6px 8px;border-radius:999px;background:var(--glass2);color:var(--muted)}}.log-ok .log-status{{color:#6ee7b7}}.log-bad .log-status{{color:#ff91a5}}.log-warn .log-status{{color:#ffe58d}}.log-meta{{display:flex;justify-content:space-between;gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}}.log-meta strong{{color:var(--text);font-size:11px}}@media(max-width:600px){{.log-status{{font-size:8px;padding:5px 6px}}.log-main{{align-items:flex-start}}.log-icon{{width:34px;height:34px;flex-basis:34px}}}}.compact{{margin:0!important;gap:8px}}.compact form{{margin:0}}.btn.danger{{border-color:rgba(239,68,68,.35)}}.health-list .meta-row strong{{font-size:12px}}.disk-meter{{padding-top:6px}}.disk-bar{{height:10px;border-radius:999px;background:rgba(127,127,127,.16);overflow:hidden;margin:8px 0 14px}}.disk-bar span{{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--pink),var(--red));transition:width .4s ease}}.resource-monitor{{display:grid;gap:18px}}.resource-summary{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}.resource-stat{{position:relative;display:flex;align-items:center;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}}.resource-stat:after{{content:"";position:absolute;inset:auto -25px -45px auto;width:100px;height:100px;border-radius:50%;filter:blur(25px);opacity:.22}}.resource-stat.cpu:after{{background:#6ee7ff}}.resource-stat.ram:after{{background:#ff4fa3}}.resource-stat.disk:after{{background:#ff9b4a}}.rs-icon{{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.055);font-size:20px}}.resource-stat.cpu .rs-icon{{color:#6ee7ff}}.resource-stat.ram .rs-icon{{color:#ff4fa3}}.resource-stat.disk .rs-icon{{color:#ff9b4a}}.resource-stat small{{display:block;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:800}}.resource-stat strong{{display:block;font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;font-size:22px;margin-top:3px;letter-spacing:.2px}}.resource-stat i{{position:absolute;left:0;bottom:0;width:42%;height:2px}}.resource-stat.cpu i{{background:linear-gradient(90deg,#6ee7ff,transparent)}}.resource-stat.ram i{{background:linear-gradient(90deg,#ff4fa3,transparent)}}.resource-stat.disk i{{background:linear-gradient(90deg,#ff9b4a,transparent)}}.resource-plot{{border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(10,13,28,.66),rgba(41,14,48,.38));padding:18px 18px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 20px 60px rgba(0,0,0,.12);overflow:hidden}}.light .resource-plot{{background:linear-gradient(145deg,rgba(255,255,255,.55),rgba(255,224,242,.42))}}.plot-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}}.plot-kicker{{display:block;font-size:9px;letter-spacing:1.8px;color:#a78bfa;font-weight:900;margin-bottom:3px}}.plot-head b{{font-size:15px}}.live-dot{{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1px;font-weight:900;color:#6ee7b7}}.live-dot i{{width:7px;height:7px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 12px #6ee7b7;animation:livePulse 1.5s ease-in-out infinite}}@keyframes livePulse{{50%{{opacity:.35;transform:scale(.72)}}}}.plot-body{{position:relative;padding-right:38px}}.y-axis{{position:absolute;right:0;top:0;bottom:25px;width:34px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;color:var(--muted);font-size:9px}}.telemetry{{display:block;width:100%;height:270px;overflow:visible}}.grid-lines line{{stroke:currentColor;stroke-opacity:.08;stroke-width:1}}.area{{stroke:none}}.cpu-area{{fill:url(#fillCpu)}}.ram-area{{fill:url(#fillRam)}}.disk-area{{fill:url(#fillDisk)}}.line{{fill:none;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;filter:url(#glowC)}}.cpu-line{{stroke:#6ee7ff}}.ram-line{{stroke:#ff4fa3;filter:url(#glowP)}}.disk-line{{stroke:#ff9b4a}}.dot{{stroke:rgba(255,255,255,.9);stroke-width:2}}.cpu-dot{{fill:#6ee7ff}}.ram-dot{{fill:#ff4fa3}}.disk-dot{{fill:#ff9b4a}}.chart-legend{{display:flex;align-items:center;justify-content:flex-start;gap:18px;margin-top:2px;padding:0 4px;flex-wrap:wrap}}.legend{{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);font-weight:800}}.legend i{{width:8px;height:8px;border-radius:50%;box-shadow:0 0 10px currentColor}}.legend.cpu{{color:#6ee7ff}}.legend.ram{{color:#ff4fa3}}.legend.disk{{color:#ff9b4a}}.updated{{margin-right:auto;font-size:9px;color:var(--muted)}}.mini-chart{{height:190px;display:flex;align-items:end;gap:8px;padding:10px 2px 4px}}.chart-col{{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:6px}}.chart-value{{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}}.chart-bar{{height:115px;width:min(28px,70%);display:flex;align-items:end;border-radius:10px 10px 4px 4px;background:rgba(139,92,246,.10);overflow:hidden}}.chart-bar span{{display:block;width:100%;border-radius:inherit;background:linear-gradient(180deg,var(--accent2),var(--accent),var(--pink));min-height:3px}}.chart-col small{{font-size:9px;color:var(--muted)}}@media(max-width:720px){{.backup-row{{align-items:stretch;flex-direction:column}}.backup-row .actions{{width:100%}}.mini-chart{{height:170px}}.chart-value{{font-size:8px}}.resource-summary{{grid-template-columns:1fr}}.resource-stat{{padding:12px 14px}}.resource-stat strong{{font-size:20px}}.resource-plot{{padding:15px 12px 10px;border-radius:18px}}.telemetry{{height:210px}}.plot-body{{padding-right:32px}}.chart-legend{{gap:12px}}.updated{{width:100%;margin-right:0}}}}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><div class="language-picker"><button class="language-toggle" id="languageToggle" type="button" aria-label="زبان" title="زبان">文</button><div class="language-menu" id="languageMenu" hidden><a href="/language?lang=fa">🇮🇷 <span>فارسی</span></a><a href="/language?lang=en">🇬🇧 <span>English</span></a></div></div><div class="theme-picker"><button class="theme-toggle" id="themeToggle" type="button" aria-label="انتخاب تم" title="انتخاب تم">☀️</button><div class="theme-menu" id="themeMenu" hidden><button type="button" data-theme-choice="dark">🌙 <span>Dark</span></button><button type="button" data-theme-choice="light">☀️ <span>Light</span></button><button type="button" data-theme-choice="custom">🎨 <span>Custom</span></button></div></div><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div id="loginToast" class="login-toast" hidden></div><div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");const themeMenu=document.getElementById("themeMenu");const choices=document.querySelectorAll("[data-theme-choice]");function apply(t){{root.classList.remove("light","custom","theme-aurora","theme-ocean","theme-emerald","theme-sunset","theme-rose","theme-violet","theme-ruby");if(t==="light")root.classList.add("light");else if(t==="custom")root.classList.add("custom");else if(t!=="dark")root.classList.add("theme-"+t);if(btn){{btn.textContent=({{light:"☀️",custom:"🎨",dark:"🌙",aurora:"🌌",ocean:"🌊",emerald:"💚",sunset:"🌅",rose:"🌹",violet:"💜"}}[t]||"🌙");btn.title="Choose theme"}}choices.forEach(function(x){{x.classList.toggle("active",x.dataset.themeChoice===t)}});const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute("content",t==="light"?"#fff1f8":t==="custom"?"var(--bg)":"#06070d")}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}if(!["light","custom","dark","aurora","ocean","emerald","sunset","rose","violet","ruby"].includes(t))t="dark";apply(t);if(btn)btn.addEventListener("click",function(e){{e.stopPropagation();if(themeMenu)themeMenu.hidden=!themeMenu.hidden}});choices.forEach(function(x){{x.addEventListener("click",function(){{t=x.dataset.themeChoice;apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}if(themeMenu)themeMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(themeMenu&&!themeMenu.hidden&&!themeMenu.contains(e.target)&&e.target!==btn)themeMenu.hidden=true}});const langBtn=document.getElementById("languageToggle");const langMenu=document.getElementById("languageMenu");if(langBtn&&langMenu){{langBtn.addEventListener("click",function(e){{e.preventDefault();e.stopPropagation();langMenu.hidden=!langMenu.hidden;if(themeMenu)themeMenu.hidden=true}});langMenu.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{langMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(!langMenu.hidden&&!langMenu.contains(e.target)&&e.target!==langBtn)langMenu.hidden=true}})}}const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});if("serviceWorker" in navigator){{navigator.serviceWorker.register("/sw.js").catch(function(){{}})}}const loginNotice=window.idontLoginNotice||null;const loginToast=document.getElementById("loginToast");if(loginNotice&&loginToast){{loginToast.textContent="⚡ "+loginNotice.text+(loginNotice.ip?" · IP: "+loginNotice.ip:"");loginToast.hidden=false;requestAnimationFrame(function(){{loginToast.classList.add("show")}});setTimeout(function(){{loginToast.classList.remove("show");setTimeout(function(){{loginToast.hidden=true}},350)}},10000)}}const cd=document.getElementById("backupCountdown");if(cd){{let sec=parseInt(cd.textContent,10);if(Number.isFinite(sec)&&sec>=0){{const fmt=function(s){{s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return (d?d+" روز ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")}};cd.textContent=fmt(sec);setInterval(function(){{if(sec>0)sec--;cd.textContent=fmt(sec)}},1000)}}}}}})();</script></body></html>'''
+.compact{{margin:0!important;gap:8px}}.compact form{{margin:0}}.btn.danger{{border-color:rgba(239,68,68,.35)}}.health-list .meta-row strong{{font-size:12px}}.disk-meter{{padding-top:6px}}.disk-bar{{height:10px;border-radius:999px;background:rgba(127,127,127,.16);overflow:hidden;margin:8px 0 14px}}.disk-bar span{{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--pink),var(--red));transition:width .4s ease}}.resource-monitor{{display:grid;gap:18px}}.resource-summary{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}.resource-stat{{position:relative;display:flex;align-items:center;gap:12px;padding:15px 16px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}}.resource-stat:after{{content:"";position:absolute;inset:auto -25px -45px auto;width:100px;height:100px;border-radius:50%;filter:blur(25px);opacity:.22}}.resource-stat.cpu:after{{background:#6ee7ff}}.resource-stat.ram:after{{background:#ff4fa3}}.resource-stat.disk:after{{background:#ff9b4a}}.rs-icon{{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:rgba(255,255,255,.055);font-size:20px}}.resource-stat.cpu .rs-icon{{color:#6ee7ff}}.resource-stat.ram .rs-icon{{color:#ff4fa3}}.resource-stat.disk .rs-icon{{color:#ff9b4a}}.resource-stat small{{display:block;color:var(--muted);font-size:9px;letter-spacing:1.2px;font-weight:800}}.resource-stat strong{{display:block;font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;font-size:22px;margin-top:3px;letter-spacing:.2px}}.resource-stat i{{position:absolute;left:0;bottom:0;width:42%;height:2px}}.resource-stat.cpu i{{background:linear-gradient(90deg,#6ee7ff,transparent)}}.resource-stat.ram i{{background:linear-gradient(90deg,#ff4fa3,transparent)}}.resource-stat.disk i{{background:linear-gradient(90deg,#ff9b4a,transparent)}}.resource-plot{{border:1px solid var(--line);border-radius:22px;background:linear-gradient(145deg,rgba(10,13,28,.66),rgba(41,14,48,.38));padding:18px 18px 12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 20px 60px rgba(0,0,0,.12);overflow:hidden}}.light .resource-plot{{background:linear-gradient(145deg,rgba(255,255,255,.55),rgba(255,224,242,.42))}}.plot-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}}.plot-kicker{{display:block;font-size:9px;letter-spacing:1.8px;color:#a78bfa;font-weight:900;margin-bottom:3px}}.plot-head b{{font-size:15px}}.live-dot{{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1px;font-weight:900;color:#6ee7b7}}.live-dot i{{width:7px;height:7px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 12px #6ee7b7;animation:livePulse 1.5s ease-in-out infinite}}@keyframes livePulse{{50%{{opacity:.35;transform:scale(.72)}}}}.plot-body{{position:relative;padding-right:38px}}.y-axis{{position:absolute;right:0;top:0;bottom:25px;width:34px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;color:var(--muted);font-size:9px}}.telemetry{{display:block;width:100%;height:270px;overflow:visible}}.grid-lines line{{stroke:currentColor;stroke-opacity:.08;stroke-width:1}}.area{{stroke:none}}.cpu-area{{fill:url(#fillCpu)}}.ram-area{{fill:url(#fillRam)}}.disk-area{{fill:url(#fillDisk)}}.line{{fill:none;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;filter:url(#glowC)}}.cpu-line{{stroke:#6ee7ff}}.ram-line{{stroke:#ff4fa3;filter:url(#glowP)}}.disk-line{{stroke:#ff9b4a}}.dot{{stroke:rgba(255,255,255,.9);stroke-width:2}}.cpu-dot{{fill:#6ee7ff}}.ram-dot{{fill:#ff4fa3}}.disk-dot{{fill:#ff9b4a}}.chart-legend{{display:flex;align-items:center;justify-content:flex-start;gap:18px;margin-top:2px;padding:0 4px;flex-wrap:wrap}}.legend{{display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);font-weight:800}}.legend i{{width:8px;height:8px;border-radius:50%;box-shadow:0 0 10px currentColor}}.legend.cpu{{color:#6ee7ff}}.legend.ram{{color:#ff4fa3}}.legend.disk{{color:#ff9b4a}}.updated{{margin-right:auto;font-size:9px;color:var(--muted)}}.mini-chart{{height:190px;display:flex;align-items:end;gap:8px;padding:10px 2px 4px}}.chart-col{{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:6px}}.chart-value{{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}}.chart-bar{{height:115px;width:min(28px,70%);display:flex;align-items:end;border-radius:10px 10px 4px 4px;background:rgba(139,92,246,.10);overflow:hidden}}.chart-bar span{{display:block;width:100%;border-radius:inherit;background:linear-gradient(180deg,var(--accent2),var(--accent),var(--pink));min-height:3px}}.chart-col small{{font-size:9px;color:var(--muted)}}@media(max-width:720px){{.backup-row{{align-items:stretch;flex-direction:column}}.backup-row .actions{{width:100%}}.mini-chart{{height:170px}}.chart-value{{font-size:8px}}.resource-summary{{grid-template-columns:1fr}}.resource-stat{{padding:12px 14px}}.resource-stat strong{{font-size:20px}}.resource-plot{{padding:15px 12px 10px;border-radius:18px}}.telemetry{{height:210px}}.plot-body{{padding-right:32px}}.chart-legend{{gap:12px}}.updated{{width:100%;margin-right:0}}}}</style></head><body><div class="aurora"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div><main class="container"><header class="topbar"><div class="brand"><img class="brand-logo" src="/static/logo.png" alt="IDONTPG Backup"><div><h1>{APP}</h1><p>{html.escape(str(idont_load_ui_settings().get("brand_subtitle","Backup Control Center · durwinam")))}</p></div></div><div class="top-actions"><button class="menu-toggle" id="menuToggle" type="button" aria-label="باز کردن منو" title="منو"><span class="hamb">☰</span></button><div class="theme-picker"><button class="theme-toggle" id="themeToggle" type="button" aria-label="انتخاب تم" title="انتخاب تم">☀️</button><div class="theme-menu" id="themeMenu" hidden><button type="button" data-theme-choice="dark">🌙 <span>Dark</span></button><button type="button" data-theme-choice="light">☀️ <span>Light</span></button><button type="button" data-theme-choice="custom">🎨 <span>Custom</span></button></div></div><div class="pill">v{VERSION} · Secure Glass UI</div></div></header>{nav}{notice_html}{body}<div id="loginToast" class="login-toast" hidden></div><div class="footer">idontPG-backup · {VERSION} · durwinam</div></main><script>(function(){{const key="idontpg-theme";const root=document.body;const btn=document.getElementById("themeToggle");const themeMenu=document.getElementById("themeMenu");const choices=document.querySelectorAll("[data-theme-choice]");function apply(t){{root.classList.remove("light","custom","theme-aurora","theme-ocean","theme-emerald","theme-sunset","theme-rose","theme-violet","theme-ruby");if(t==="light")root.classList.add("light");else if(t==="custom")root.classList.add("custom");else if(t!=="dark")root.classList.add("theme-"+t);if(btn){{btn.textContent=({{light:"☀️",custom:"🎨",dark:"🌙",aurora:"🌌",ocean:"🌊",emerald:"💚",sunset:"🌅",rose:"🌹",violet:"💜"}}[t]||"🌙");btn.title="انتخاب تم"}}choices.forEach(function(x){{x.classList.toggle("active",x.dataset.themeChoice===t)}});const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute("content",t==="light"?"#fff1f8":t==="custom"?"var(--bg)":"#06070d")}}let t="dark";try{{t=localStorage.getItem(key)||"dark"}}catch(e){{}}if(!["light","custom","dark","aurora","ocean","emerald","sunset","rose","violet","ruby"].includes(t))t="dark";apply(t);if(btn)btn.addEventListener("click",function(e){{e.stopPropagation();if(themeMenu)themeMenu.hidden=!themeMenu.hidden}});choices.forEach(function(x){{x.addEventListener("click",function(){{t=x.dataset.themeChoice;apply(t);try{{localStorage.setItem(key,t)}}catch(e){{}}if(themeMenu)themeMenu.hidden=true}})}});document.addEventListener("click",function(e){{if(themeMenu&&!themeMenu.hidden&&!themeMenu.contains(e.target)&&e.target!==btn)themeMenu.hidden=true}});const menu=document.getElementById("menuToggle");const drawer=document.getElementById("drawer");const backdrop=document.getElementById("drawerBackdrop");const close=document.getElementById("drawerClose");function setMenu(open){{if(!drawer)return;drawer.classList.toggle("open",open);if(backdrop)backdrop.classList.toggle("open",open);if(menu)menu.classList.toggle("open",open);drawer.setAttribute("aria-hidden",open?"false":"true");document.body.style.overflow=open?"hidden":""}}if(menu)menu.addEventListener("click",function(){{setMenu(!drawer.classList.contains("open"))}});if(backdrop)backdrop.addEventListener("click",function(){{setMenu(false)}});if(close)close.addEventListener("click",function(){{setMenu(false)}});document.addEventListener("keydown",function(e){{if(e.key==="Escape")setMenu(false)}});if(drawer)drawer.querySelectorAll("a").forEach(function(a){{a.addEventListener("click",function(){{setMenu(false)}})}});if("serviceWorker" in navigator){{navigator.serviceWorker.register("/sw.js").catch(function(){{}})}}const loginNotice=window.idontLoginNotice||null;const loginToast=document.getElementById("loginToast");if(loginNotice&&loginToast){{loginToast.textContent="⚡ "+loginNotice.text+(loginNotice.ip?" · IP: "+loginNotice.ip:"");loginToast.hidden=false;requestAnimationFrame(function(){{loginToast.classList.add("show")}});setTimeout(function(){{loginToast.classList.remove("show");setTimeout(function(){{loginToast.hidden=true}},350)}},10000)}}const cd=document.getElementById("backupCountdown");if(cd){{let sec=parseInt(cd.textContent,10);if(Number.isFinite(sec)&&sec>=0){{const fmt=function(s){{s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return (d?d+" روز ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0")}};cd.textContent=fmt(sec);setInterval(function(){{if(sec>0)sec--;cd.textContent=fmt(sec)}},1000)}}}}}})();</script></body></html>'''
 
 
 def hidden_csrf(sid):
@@ -2064,10 +1861,6 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def send_html(self, content, status=200):
-        lang = _request_lang(self)
-        if lang == "en":
-            content = _translate_en(content)
-            content = content.replace('<html lang="fa" dir="rtl">', '<html lang="en" dir="ltr">', 1)
         data = content.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2102,29 +1895,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
         c = load_cfg()
-        if path == "/language":
-            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            lang = (query.get("lang", ["fa"])[0] or "fa").lower()
-            if lang not in {"fa", "en"}:
-                lang = "fa"
-            ref = self.headers.get("Referer", "")
-            try:
-                ref_path = urllib.parse.urlparse(ref).path or "/"
-                ref_query = urllib.parse.urlparse(ref).query
-                location = ref_path + (("?" + ref_query) if ref_query else "")
-                if not location.startswith("/") or location.startswith("//"):
-                    location = "/"
-            except Exception:
-                location = "/"
-            if self.sid():
-                username,ip,device=_request_context(self)
-                _record_activity(f"Language changed to {lang.upper()}","info","settings",username,ip,device)
-            self.send_response(302)
-            self.send_header("Set-Cookie", f"idontpg_lang={lang}; Max-Age=31536000; Path=/; SameSite=Lax")
-            self.send_header("Location", location)
-            self.end_headers()
-            return
         if path == "/manifest.webmanifest":
             payload=json.dumps({"name":"idontPG backup","short_name":"idontPG","start_url":"/","display":"standalone","background_color":"#06070d","theme_color":"#06070d","icons":[{"src":"/static/logo.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]},ensure_ascii=False).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type","application/manifest+json; charset=utf-8"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
@@ -2138,10 +1911,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             sid = self.sid()
             was_admin = bool(sid and SESSIONS.get(sid, {}).get("role") == "admin")
-            if sid:
-                username,ip,device=_request_context(self)
-                _record_activity("Panel logout","ok","logout",username,ip,device)
-                SESSIONS.pop(sid, None)
+            if sid: SESSIONS.pop(sid, None)
             self.send_response(302)
             self.send_header("Set-Cookie", "idontpg_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/")
             self.send_header("Location", ADMIN_PATH if was_admin else "/login")
@@ -2256,8 +2026,44 @@ class Handler(BaseHTTPRequestHandler):
             return
 
 
+        if path == "/account":
+            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button></div></form><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🔐 آخرین ورود</h3><p class="sub">آخرین ورود موفق</p></div></div><div class="meta"><div class="meta-row"><span>IP</span><strong>{html.escape(str(c.get("last_login",{}).get("ip") or "—"))}</strong></div><div class="meta-row"><span>زمان</span><strong>{html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(c.get("last_login",{}).get("time",0) or 0)))) if c.get("last_login",{}).get("time") else "—"}</strong></div><div class="meta-row"><span>دستگاه / مرورگر</span><strong>{html.escape(str(c.get("last_login",{}).get("device") or "—"))}</strong></div></div></div></div>'''
+            self.send_html(page("Account", body)); return
+
+        if path == "/telegram":
+            body = f'''<section class="hero"><h2>{ui_icon("telegram", "hero-icon")} <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button><a class="btn" href="/test">{ui_icon("test", "inline-icon")} تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            self.send_html(page("Telegram Backup", body)); return
+
+        if path == "/backup-settings":
+            checked = "checked" if c.get("node") else ""
+            body = f'''<section class="hero"><h2>{ui_icon("settings", "hero-icon")} تنظیمات <span class="gradient">Backup</span></h2><p>کنترل Scheduler و اجرای Backup دستی.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">زمان‌بندی خودکار</h3><p class="sub">Scheduler</p></div></div><span class="status {'on' if status=='active' else 'off'}">{html.escape(status)}</span></div><form method="post" action="/backup-settings">{hidden_csrf(self.sid())}<div class="field"><label>بازه Backup (ساعت)</label><input name="interval" type="number" step="0.5" min="0.5" max="720" value="{html.escape(str(c.get('interval','24')))}" required></div><label class="toggle"><span>شامل PG-Node شود</span><input type="checkbox" name="node" {checked}></label><div class="actions"><button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ذخیره و شروع</button><button class="btn danger" type="submit" formaction="/stop" formmethod="post">{ui_icon("activity", "inline-icon")} توقف</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">Backup دستی</h3><p class="sub">Manual Backup</p></div></div></div><p class="empty">همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.</p><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn good full">{ui_icon("rocket", "inline-icon")} شروع Backup دستی</button></form></article></div>'''
+            self.send_html(page("Backup Settings", body)); return
+
+        if path == "/test":
+            body = f'''<section class="hero"><h2>{ui_icon("test", "hero-icon")} تست <span class="gradient">Telegram</span></h2><p>یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.</p></section><div class="glass wide"><div class="meta"><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>Proxy</span><span>{html.escape(c.get('proxy') or 'بدون Proxy')}</span></div></div><form method="post" action="/test">{hidden_csrf(self.sid())}<div class="actions"><button class="btn primary">{ui_icon("test", "inline-icon")} ارسال پیام تست</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            self.send_html(page("Telegram Test", body)); return
+
+        if path == "/logs":
+            sid = self.sid()
+            session_info = SESSIONS.get(sid, {}) if sid else {}
+            if not session_info:
+                self.send_response(302); self.send_header("Location","/login"); self.end_headers(); return
+            current_username = canonical_username(session_info.get("username") or c.get("username","admin"))
+            current_role = str(session_info.get("role") or "user")
+            logs = [x for x in get_login_logs() if canonical_username(x.get("username","admin")) == current_username and str(x.get("role","user")) == current_role]
+            rows=[]
+            for x in logs[:50]:
+                ts=float(x.get("time",0) or 0)
+                rows.append(f'<div class="meta-row"><span>🔐 {html.escape(current_username)} · {html.escape(str(x.get("device","Unknown")))}</span><strong>{html.escape(str(x.get("ip","unknown")))} · {html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))}</strong></div>')
+            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
+            self.send_html(page("Logs",body)); return
+        self.send_html(page("404", '<div class="glass"><h2>404</h2><p class="empty">صفحه پیدا نشد.</p></div>'), 404)
+
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
         c = load_cfg()
         data = self.form()
 
@@ -2327,61 +2133,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self.require_csrf(data):
             self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
 
-        if path == "/account":
-            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button><a class="btn" href="/logs">{ui_icon("activity", "inline-icon")} مشاهده لاگ‌ها</a></div></form><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🔐 آخرین ورود</h3><p class="sub">آخرین ورود موفق</p></div></div><div class="meta"><div class="meta-row"><span>IP</span><strong>{html.escape(str(c.get("last_login",{}).get("ip") or "—"))}</strong></div><div class="meta-row"><span>زمان</span><strong>{html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(c.get("last_login",{}).get("time",0) or 0)))) if c.get("last_login",{}).get("time") else "—"}</strong></div><div class="meta-row"><span>دستگاه / مرورگر</span><strong>{html.escape(str(c.get("last_login",{}).get("device") or "—"))}</strong></div></div></div></div>'''
-            self.send_html(page("Account", body)); return
-
-        if path == "/telegram":
-            body = f'''<section class="hero"><h2>{ui_icon("telegram", "hero-icon")} <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button><a class="btn" href="/test">{ui_icon("test", "inline-icon")} تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
-            self.send_html(page("Telegram Backup", body)); return
-
-        if path == "/backup-settings":
-            checked = "checked" if c.get("node") else ""
-            body = f'''<section class="hero"><h2>{ui_icon("settings", "hero-icon")} تنظیمات <span class="gradient">Backup</span></h2><p>کنترل Scheduler و اجرای Backup دستی.</p></section><div class="grid"><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("clock", "card-icon")}<div><h3 class="title">زمان‌بندی خودکار</h3><p class="sub">Scheduler</p></div></div><span class="status {'on' if status=='active' else 'off'}">{html.escape(status)}</span></div><form method="post" action="/backup-settings">{hidden_csrf(self.sid())}<div class="field"><label>بازه Backup (ساعت)</label><input name="interval" type="number" step="0.5" min="0.5" max="720" value="{html.escape(str(c.get('interval','24')))}" required></div><label class="toggle"><span>شامل PG-Node شود</span><input type="checkbox" name="node" {checked}></label><div class="actions"><button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ذخیره و شروع</button><button class="btn danger" type="submit" formaction="/stop" formmethod="post">{ui_icon("activity", "inline-icon")} توقف</button></div></form></article><article class="glass card"><div class="card-head"><div style="display:flex;gap:12px">{ui_icon("backup", "card-icon")}<div><h3 class="title">Backup دستی</h3><p class="sub">Manual Backup</p></div></div></div><p class="empty">همین حالا یک Backup کامل بگیرید و طبق تنظیمات Telegram برای مقصد فعلی ارسال کنید.</p><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn good full">{ui_icon("rocket", "inline-icon")} شروع Backup دستی</button></form></article></div>'''
-            self.send_html(page("Backup Settings", body)); return
-
-        if path == "/test":
-            body = f'''<section class="hero"><h2>{ui_icon("test", "hero-icon")} تست <span class="gradient">Telegram</span></h2><p>یک پیام آزمایشی با تنظیمات فعلی ارسال می‌شود.</p></section><div class="glass wide"><div class="meta"><div class="meta-row"><span>Chat ID</span><span>{html.escape(c.get('chat') or 'تنظیم نشده')}</span></div><div class="meta-row"><span>Topic ID</span><span>{html.escape(c.get('topic') or '—')}</span></div><div class="meta-row"><span>Proxy</span><span>{html.escape(c.get('proxy') or 'بدون Proxy')}</span></div></div><form method="post" action="/test">{hidden_csrf(self.sid())}<div class="actions"><button class="btn primary">{ui_icon("test", "inline-icon")} ارسال پیام تست</button><a class="btn" href="/">← برگشت</a></div></form></div>'''
-            self.send_html(page("Telegram Test", body)); return
-
         if path == "/logs":
-            sid = self.sid()
-            session_info = SESSIONS.get(sid, {}) if sid else {}
-            if not session_info:
-                self.send_response(302); self.send_header("Location","/login"); self.end_headers(); return
-            current_username = canonical_username(session_info.get("username") or c.get("username","admin"))
+            session_info = SESSIONS.get(self.sid(), {})
+            current_username = canonical_username(session_info.get("username") or c.get("username", "admin"))
             current_role = str(session_info.get("role") or "user")
-            audit = []
-            for x in get_all_activities():
-                owner = canonical_username(x.get("username") or current_username)
-                if owner == current_username:
-                    audit.append(x)
-            # Also include legacy login records that predate the unified audit log.
-            for x in get_login_logs():
-                if canonical_username(x.get("username","admin")) == current_username and str(x.get("role","user")) == current_role:
-                    audit.append({"time":x.get("time",0),"message":"Successful panel login","kind":"ok","event":"login_success","username":current_username,"ip":x.get("ip","unknown"),"device":x.get("device","Unknown")})
-            audit.sort(key=lambda x: float(x.get("time",0) or 0), reverse=True)
+            logs = [x for x in get_login_logs() if canonical_username(x.get("username", "admin")) == current_username and str(x.get("role", "user")) == current_role]
             rows=[]
-            labels={
-                "ok":"SUCCESS","bad":"FAILED","warn":"WARNING","info":"INFO"
-            }
-            icons={
-                "login_success":"🔐","login_failed":"🚫","backup_start":"📦","backup_success":"✅","backup_failed":"❌",
-                "telegram_success":"📨","telegram_failed":"⚠️","telegram_test_success":"🧪","telegram_test_failed":"🧪",
-                "scheduler":"⏱️","account":"👤","settings":"⚙️","backup_delete":"🗑️","logout":"↩️","activity":"•"
-            }
-            for x in audit[:100]:
-                ts=float(x.get("time",0) or 0)
-                kind=str(x.get("kind","info"))
-                event=str(x.get("event","activity"))
-                icon=icons.get(event,"•")
-                status=labels.get(kind,kind.upper())
-                msg=html.escape(str(x.get("message","Activity")))
-                ip=html.escape(str(x.get("ip") or "—"))
-                device=html.escape(str(x.get("device") or "—"))
-                stamp=html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))
-                rows.append(f'<div class="log-entry log-{html.escape(kind)}"><div class="log-main"><span class="log-icon">{icon}</span><div class="log-copy"><strong>{msg}</strong><small>{stamp} · {device}</small></div><span class="log-status">{status}</span></div><div class="log-meta"><span>IP</span><strong>{ip}</strong></div></div>')
-            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>تاریخچه ورود، Backup، Telegram، Scheduler و فعالیت‌های پنل همین سرور.</p></section><div class="glass wide"><div class="activity-list logs-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
+            for x in logs[:50]:
+                ts=float(x.get("time",0) or 0); rows.append('<div class="meta-row"><span>🔐 '+html.escape(current_username)+' · '+html.escape(current_role)+'</span><strong>'+html.escape(str(x.get("ip","unknown")))+' · '+html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(ts)))+'</strong></div>')
+            body='<section class="hero"><h2>'+ui_icon("activity","hero-icon")+' <span class="gradient">لاگ‌ها</span></h2><p>فقط تاریخچه ورودهای همین حساب نمایش داده می‌شود.</p></section><div class="glass wide"><div class="activity-list">'+(''.join(rows) or '<div class="empty">هنوز لاگی برای این حساب ثبت نشده.</div>')+'</div></div>'
             self.send_html(page("Logs",body)); return
 
         if path == "/account":
@@ -2399,22 +2159,16 @@ class Handler(BaseHTTPRequestHandler):
                 salt, digest = hash_password(pw)
                 c.update({"password_salt": salt, "password_hash": digest})
             save_cfg(c)
-            username_ctx,ip_ctx,device_ctx=_request_context(self)
-            _record_activity("Account settings saved","ok","account",username_ctx,ip_ctx,device_ctx)
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
 
         if path == "/telegram":
             c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip()})
             save_cfg(c)
-            username,ip,device=_request_context(self)
-            _record_activity("Telegram settings saved","ok","settings",username,ip,device)
             self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
 
         if path == "/test":
             ok, msg = telegram_test(c)
-            username,ip,device=_request_context(self)
-            _record_activity("Telegram test message sent successfully" if ok else f"Telegram test message failed: {msg}","ok" if ok else "bad","telegram_test_success" if ok else "telegram_test_failed",username,ip,device)
             kind = "ok" if ok else "bad"
             body = f'<div class="glass"><div class="notice {kind}">{status_dot("ok" if ok else "bad")} {"پیام تست با موفقیت ارسال شد." if ok else "ارسال پیام تست ناموفق بود."}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/test">تلاش دوباره</a><a class="btn" href="/">داشبورد</a></div></div>'
             self.send_html(page("Telegram Test", body, notice="", kind=kind)); return
@@ -2429,14 +2183,11 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             p = scheduler_service("restart")
             ok = p.returncode == 0
-            username,ip,device=_request_context(self)
-            _record_activity("Backup Scheduler restarted" if ok else "Backup Scheduler restart failed","ok" if ok else "bad","scheduler",username,ip,device)
             self.send_html(page("Backup Settings", f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{"Scheduler ذخیره و شروع شد." if ok else "Scheduler ذخیره شد ولی شروع آن با خطا مواجه شد."}</div><a class="btn" href="/backup-settings">برگشت</a></div>')); return
 
         if path == "/stop":
             p = scheduler_service("stop")
-            username,ip,device=_request_context(self)
-            _record_activity("Backup Scheduler stopped","ok" if p.returncode == 0 else "bad","scheduler",username,ip,device)
+            _record_activity("Scheduler متوقف شد", "ok" if p.returncode == 0 else "bad")
             self.redirect("/backup-settings"); return
 
         if path == "/backup-delete":
@@ -2445,15 +2196,14 @@ class Handler(BaseHTTPRequestHandler):
             if not target or not target.is_file():
                 self.send_html(page("Backup",'<div class="glass"><div class="notice bad">Backup پیدا نشد.</div></div>'),404); return
             try:
-                target.unlink(); username,ip,device=_request_context(self); _record_activity(f"Backup deleted: {requested}","ok","backup_delete",username,ip,device); self.redirect("/backups")
+                target.unlink(); _record_activity(f"Backup حذف شد: {requested}","ok"); self.redirect("/backups")
             except OSError as exc:
                 self.send_html(page("Backup",f'<div class="glass"><div class="notice bad">حذف Backup ناموفق بود: {html.escape(str(exc))}</div></div>'),500)
             return
 
         if path == "/backup":
-            username,ip,device=_request_context(self)
             try:
-                ok, msg = make_backup(send=True, audit=(username,ip,device))
+                ok, msg = make_backup(send=True)
             except Exception as e:
                 ok, msg = False, str(e)
             body = f'<div class="glass"><div class="notice {"ok" if ok else "bad"}">{status_dot("ok" if ok else "bad")} {("Backup با موفقیت ساخته و ارسال شد." if ok else "Backup ناموفق بود.")}<br><span class="empty">{html.escape(str(msg))}</span></div><div class="actions"><a class="btn" href="/backup-settings">تنظیمات Backup</a><a class="btn" href="/">داشبورد</a></div></div>'
