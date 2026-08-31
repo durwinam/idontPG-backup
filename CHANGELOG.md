@@ -41,3 +41,8 @@
 - Accepts newer/older node field shapes for address, port, API key, and CA certificate.
 - Keeps the UI unchanged and accumulates Node counters across Xray/Panel resets.
 - Records the last Node connection error internally instead of silently swallowing every failure.
+
+
+### Audit Log update
+- Full panel audit trail: login, admin login, backups, Telegram, scheduler, account, delete, logout, language changes.
+- Up to 200 audit events stored separately from the dashboard 3-item activity feed.
