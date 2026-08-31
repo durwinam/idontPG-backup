@@ -194,7 +194,14 @@ PasarGuard
 Telegram: http://t.me/DuRnaziiAy
 
 GitHub: https://github.com/durwinam
+## 📚 مستندات
 
+برای مشاهده راهنمای کامل نصب، استفاده، تنظیمات و قابلیت‌های **idontPG-backup**:
+
+**🌐 [مستندات idontPG-backup](https://docs.mypanelhome.ir)**
+
+نسخه آنلاین و کامل مستندات:
+https://docs.mypanelhome.ir
 ---
 
 <div align="center">🛡️ idontPG-backup
@@ -406,7 +413,14 @@ For contact and support:
 **Telegram:** http://t.me/DuRnaziiAy
 
 **GitHub:** https://github.com/durwinam
+## 📚 Documentation
 
+For the complete installation guide, usage instructions, configuration, and features of **idontPG-backup**:
+
+**🌐 [idontPG-backup Documentation](https://docs.mypanelhome.ir)**
+
+Online documentation:
+https://docs.mypanelhome.ir
 ---
 
 <div align="center">
@@ -611,7 +625,14 @@ PasarGuard
 Telegram: http://t.me/DuRnaziiAy
 
 GitHub: https://github.com/durwinam
+## 📚 Документация
 
+Полное руководство по установке, использованию, настройке и возможностям **idontPG-backup**:
+
+**🌐 [Документация idontPG-backup](https://docs.mypanelhome.ir)**
+
+Онлайн-документация:
+https://docs.mypanelhome.ir
 ---
 
 <div align="center">
