@@ -119,6 +119,39 @@ def save_cfg(c):
     tmp.replace(CONFIG)
 
 
+HTTPS_CONF = STATE_DIR / "https.conf"
+
+def load_https_settings():
+    data = {}
+    try:
+        if HTTPS_CONF.exists():
+            for line in HTTPS_CONF.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                data[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        return {}
+    return data
+
+def make_https_server(server):
+    cfg = load_https_settings()
+    cert = cfg.get("CERT_FILE", "")
+    key = cfg.get("KEY_FILE", "")
+    if not cert or not key or not os.path.isfile(cert) or not os.path.isfile(key):
+        return False
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certfile=cert, keyfile=key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        return True
+    except Exception as exc:
+        print(f"[!] HTTPS certificate could not be loaded: {exc}; falling back to HTTP", flush=True)
+        return False
+
+
 def hash_password(password, salt=None):
     salt = salt or secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 250_000)
@@ -2100,8 +2133,12 @@ def main():
     args = ap.parse_args()
     if args.worker:
         worker(); return
-    print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    if make_https_server(server):
+        print(f"{APP} Web Panel v{VERSION} listening on https://{HOST}:{PORT}", flush=True)
+    else:
+        print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}", flush=True)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
