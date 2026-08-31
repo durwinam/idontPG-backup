@@ -291,10 +291,10 @@ def send_archive(core, archive, c, caption):
                 os.remove(part)
             except OSError:
                 pass
-        try:
-            os.remove(archive)
-        except OSError:
-            pass
+        # Keep the original archive on disk after Telegram upload so the
+        # latest sent backup is also available in the Web Panel for direct
+        # download and manual deletion. Split chunks are still removed above.
+        pass
 
 
 def make_backup(send=True):
