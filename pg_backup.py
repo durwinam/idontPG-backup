@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.6.4
+#   idontPG-backup  v5.7.0
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 #   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB
@@ -74,7 +74,7 @@ import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
-VERSION = "5.6.4"
+VERSION = "5.7.0"
 
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
@@ -3658,7 +3658,7 @@ def _download_update_file(url, dest, timeout=45):
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "idontPG-backup-updater/5.6.4"},
+            headers={"User-Agent": "idontPG-backup-updater/5.7.0"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()

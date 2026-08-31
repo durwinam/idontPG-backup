@@ -1,3 +1,19 @@
+## v5.7.0
+
+### New Features
+- Private per-user login logs and last-login information.
+- Telegram login notifications with source IP information.
+- Temporary login alerts shown for 10 seconds.
+- Progressive Web App support for `idontPG backup`.
+- Seven additional browser-local themes.
+- Dedicated Backup Health and server resource cards.
+- Three most recent backups shown first with direct download/delete actions.
+- HTTP-only installation mode without certificate requirements.
+
+### Improvements
+- CLI version updated to v5.7.0.
+- Web Panel version updated to v5.7.0.
+
 ## v5.6.4
 
 - Improved light-theme icon styling for better contrast and visual consistency.
