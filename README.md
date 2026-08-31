@@ -71,7 +71,7 @@ idontPG-backup دارای یک پنل وب سبک و حرفه‌ای برای م
 - 🔎 نمایش وضعیت عملیات Backup
   
 ```bash
-Web panel_URL:http://IP-SERVER:5000
+Web panel_URL:https://IP-DOMAIN:5000  // OR:http://IP-DOMAIN:5000
 ```
 
 🛠 نصب و اجرا
@@ -269,7 +269,7 @@ The panel is designed with a focus on **speed, simplicity, and important system 
 - 🔎 Display backup operation status
 
 ```bash
-Web panel_URL:http://IP-SERVER:5000
+Web panel_URL:https://IP-DOMAIN:5000  // OR:http://IP-DOMAIN:5000
 ```
 
 ---
@@ -483,7 +483,7 @@ idontPG-backup включает лёгкую и профессиональную
 - 🔎 Отображение состояния операции Backup
   
 ```bash
-Web panel_URL:http://IP-SERVER:5000
+Web panel_URL:https://IP-DOMAIN:5000  // OR:http://IP-DOMAIN:5000
 ```
 
 🛠 Установка и запуск
