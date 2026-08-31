@@ -1935,8 +1935,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/backups":
             archives=_backup_archives()
             latest = archives[0] if archives else None
+            # The Backup Manager intentionally shows only a rolling window of
+            # the 3 newest retained backup files. A new backup enters at the
+            # top and the oldest of these three drops out of the UI list.
+            recent_archives = archives[:3]
             rows=[]
-            for item,size,mtime in (archives[1:] if latest else []):
+            for item,size,mtime in (recent_archives[1:] if latest else []):
                 name=html.escape(item.name); q=urllib.parse.quote(item.name,safe="")
                 rows.append(f'<div class="backup-row"><div><strong>📦 {name}</strong><div class="sub">{html.escape(time.strftime("%Y-%m-%d %H:%M",time.localtime(mtime)))} · {html.escape(_format_bytes(size))}</div></div><div class="actions compact"><a class="btn" href="/backup-download?name={q}">{ui_icon("download", "inline-icon")} دانلود</a><form method="post" action="/backup-delete">{hidden_csrf(self.sid())}<input type="hidden" name="name" value="{name}"><button class="btn danger" type="submit">{ui_icon("trash", "inline-icon")} حذف</button></form></div></div>')
             latest_html = '<div class="empty">هنوز Backupای پیدا نشد.</div>'
@@ -1948,7 +1952,7 @@ class Handler(BaseHTTPRequestHandler):
   <div class="latest-backup-actions"><a class="btn primary" href="/backup-download?name={q}">{ui_icon("download", "inline-icon")} دانلود مستقیم Backup</a><form method="post" action="/backup-delete">{hidden_csrf(self.sid())}<input type="hidden" name="name" value="{name}"><button class="btn danger" type="submit">{ui_icon("trash", "inline-icon")} حذف Backup</button></form></div>
 </div>'''
             older_html = ''.join(rows) or '<div class="empty">Backup قدیمی دیگری وجود ندارد.</div>'
-            body=f'''<section class="hero"><h2>{ui_icon("backup", "hero-icon")} <span class="gradient">مدیریت Backupها</span></h2><p>آخرین Backup ذخیره‌شده یا ارسال‌شده به Telegram همیشه در بالای این بخش قرار می‌گیرد.</p></section><div class="glass wide"><div class="backup-list">{latest_html}</div><div class="older-backups"><div class="section-label">Backupهای قبلی</div>{older_html}</div><div class="actions"><a class="btn" href="/">← داشبورد</a><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ساخت Backup جدید</button></form></div></div>'''
+            body=f'''<section class="hero"><h2>{ui_icon("backup", "hero-icon")} <span class="gradient">مدیریت Backupها</span></h2><p>آخرین Backup ذخیره‌شده یا ارسال‌شده به Telegram همیشه در بالای این بخش قرار می‌گیرد.</p></section><div class="glass wide"><div class="backup-list">{latest_html}</div><div class="older-backups"><div class="section-label">۳ Backup اخیر</div>{older_html}</div><div class="actions"><a class="btn" href="/">← داشبورد</a><form method="post" action="/backup">{hidden_csrf(self.sid())}<button class="btn primary" type="submit">{ui_icon("rocket", "inline-icon")} ساخت Backup جدید</button></form></div></div>'''
             self.send_html(page("Backup Manager",body)); return
 
         if path == "/backup-download":
