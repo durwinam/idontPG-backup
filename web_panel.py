@@ -2256,6 +2256,77 @@ class Handler(BaseHTTPRequestHandler):
             return
 
 
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        c = load_cfg()
+        data = self.form()
+
+        if path == "/setup":
+            # First-run setup is one-time only. Once a password exists, this route
+            # can never be used to replace the admin credentials.
+            if c.get("password_hash"):
+                self.send_html(page("Setup", '<div class="glass"><div class="notice bad">راه‌اندازی اولیه قبلاً انجام شده است.</div><a class="btn" href="/login">ورود به پنل</a></div>', False), 403); return
+            username = data.get("username", "").strip()
+            pw = data.get("password", "")
+            confirm = data.get("password_confirm", "")
+            if not valid_username(username):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">نام کاربری باید ۵ تا ۳۲ کاراکتر و فقط شامل حروف انگلیسی، عدد یا خط تیره باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if not valid_password(pw):
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">رمز باید حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * باشد.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            if pw != confirm:
+                self.send_html(page("Setup", '<section class="login"><div class="glass"><div class="notice bad">تکرار رمز عبور با رمز جدید یکسان نیست.</div><a class="btn" href="/">تلاش دوباره</a></div></section>', False)); return
+            salt, digest = hash_password(pw)
+            c.update({"username": username, "password_salt": salt, "password_hash": digest})
+            save_cfg(c)
+            self.redirect("/login"); return
+
+        if path == "/login":
+            username_ok = hmac.compare_digest(data.get("username", "").strip(), canonical_username(c.get("username", "admin")))
+            if username_ok and check_password(data.get("password", ""), c):
+                sid = secrets.token_urlsafe(32)
+                login_ip=self.client_address[0] if self.client_address else "unknown"
+                login_time=_record_login(login_ip,canonical_username(c.get("username","admin")),"user",_login_device(self.headers.get("User-Agent","")))
+                c["last_login"]={"time":login_time,"ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c)
+                _record_activity(f"ورود موفق به پنل از {login_ip}","ok")
+                _notify_login_telegram(c,login_ip,canonical_username(c.get("username","admin")))
+                SESSIONS[sid] = {"created": time.time(), "csrf": secrets.token_urlsafe(24), "role": "user", "username": canonical_username(c.get("username","admin")), "login_notice":{"text":"ورود با موفقیت انجام شد","ip":login_ip,"device":_login_device(self.headers.get("User-Agent",""))}}
+                self.send_response(302)
+                self.send_header("Set-Cookie", "idontpg_session=" + sid + "; HttpOnly; SameSite=Strict; Path=/")
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_html(self.login_page("نام کاربری یا رمز عبور اشتباه است."), 401)
+            return
+
+        if path == ADMIN_PATH:
+            if not self.admin_logged():
+                ip=self.client_address[0] if self.client_address else "unknown"; now=time.time(); recent=[x for x in ADMIN_LOGIN_ATTEMPTS.get(ip,[]) if now-x<900]
+                if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
+                ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
+                if not ok:
+                    recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
+                ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
+                self.send_response(303); self.send_header("Set-Cookie",f"idontpg_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=7200"); self.send_header("Location",ADMIN_PATH); self.end_headers(); return
+            if not self.require_csrf(data):
+                self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
+            try:
+                ui=idont_apply_ui_settings(data)
+                t=ui.setdefault("theme",{})
+                t["content_width"]=_ui_int(data.get("content_width",t.get("content_width",1180)),1180,860,1500)
+                t["card_gap"]=_ui_int(data.get("card_gap",t.get("card_gap",16)),16,8,32)
+                t["shadow_strength"]=_ui_float(data.get("shadow_strength",t.get("shadow_strength",.5)),.5,0,1)
+                ui["brand_subtitle"]=str(data.get("brand_subtitle",ui.get("brand_subtitle","Backup Control Center · durwinam")))[:120]
+                idont_save_ui_settings(ui)
+                self.send_html(page("Admin",'<div class="glass"><div class="notice ok">تنظیمات با موفقیت ذخیره شد و روی کل وب‌پنل اعمال شد.</div><a class="btn primary" href="'+ADMIN_PATH+'">بازگشت به مدیریت</a></div>'))
+            except Exception as exc:
+                self.send_html(page("Admin",f'<div class="glass"><div class="notice bad">ذخیره تنظیمات ناموفق بود: {html.escape(str(exc))}</div><a class="btn" href="{ADMIN_PATH}">تلاش دوباره</a></div>'),500)
+            return
+
+        if not self.logged():
+            self.redirect("/login"); return
+        if not self.require_csrf(data):
+            self.send_html(page("Security", '<div class="glass"><div class="notice bad">درخواست نامعتبر یا منقضی شده است. صفحه را دوباره باز کنید.</div></div>'), 403); return
+
         if path == "/account":
             body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button><a class="btn" href="/logs">{ui_icon("activity", "inline-icon")} مشاهده لاگ‌ها</a></div></form><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🔐 آخرین ورود</h3><p class="sub">آخرین ورود موفق</p></div></div><div class="meta"><div class="meta-row"><span>IP</span><strong>{html.escape(str(c.get("last_login",{}).get("ip") or "—"))}</strong></div><div class="meta-row"><span>زمان</span><strong>{html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(c.get("last_login",{}).get("time",0) or 0)))) if c.get("last_login",{}).get("time") else "—"}</strong></div><div class="meta-row"><span>دستگاه / مرورگر</span><strong>{html.escape(str(c.get("last_login",{}).get("device") or "—"))}</strong></div></div></div></div>'''
             self.send_html(page("Account", body)); return
