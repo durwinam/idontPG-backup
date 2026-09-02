@@ -125,9 +125,9 @@ PasarGuard и PG-Node, созданный для упрощения процес
 | 🕒 Recent Activities | Отображение 3 последних действий |
 | 📤 Manual Backup | Ручная отправка Backup |
 | 🤖 Telegram Bot Test | Отправка тестового сообщения Telegram-боту |
-| ♻️ Restore | 🚧 Скоро |
-| 🚚 Migration | 🚧 Скоро |
-| 🔄 Transfer | 🚧 Скоро |
+| ♻️ Restore | Web Panel & PasarGuard Restore |
+| 🚚 Migration | Доступно в v5.8.0 |
+| 🔄 Transfer | Доступно в v5.8.0 |
 
 # 🗄️ Поддержка движков баз данных
 
@@ -173,13 +173,15 @@ PasarGuard
 
 ---
 
-🚧 Скоро
+Доступно в v5.8.0
 
 Следующие расширенные возможности будут добавлены в будущих версиях:
 
-- ♻️ Restore
-- 🚚 Migration
-- 🔄 Transfer
+- ♻️ Restore Center
+- 🩺 Run Diagnostics
+- 🔐 Session Management
+- 🔔 Notification Center
+- 🕒 Backup Timeline
 
 ```
 

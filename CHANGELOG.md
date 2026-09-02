@@ -1,4 +1,28 @@
-## v5.7.0
+## v5.8.0 — Restore deferred
+- Restore UI and Web Panel Restore endpoints are intentionally removed from this release.
+- Backup, Telegram, Scheduler, monitoring, account and other existing features remain unchanged.
+- Restore will return as a dedicated feature in the next update after the workflow is finalized.
+
+## v5.8.0 — Password Policy Fix
+- Fixed the setup password pattern to match the displayed policy: 8+ chars, 2 letters, 1 digit, and #/@/*.
+- Removed the unintended uppercase-letter requirement.
+
+## v5.8.0
+
+### Web Panel
+- Restore Center for Web Panel and PasarGuard.
+- Backup `.env` and manifest validation before restore.
+- Source/destination database selection with TimescaleDB recommended.
+- Live restore logs and circular progress.
+- Node traffic history preservation and keep-nodes-disabled options.
+- Run Diagnostics, Security Center, Notification Center, Session Management, Backup Timeline and Command Center.
+
+### Telegram
+- Automatic Telegram backup-message cleanup settings.
+- Five newest Telegram backups remain protected.
+- Web Panel backup files are never removed by Telegram cleanup.
+
+## v5.8.0
 
 ### New Features
 - Private per-user login logs and last-login information.
@@ -11,8 +35,8 @@
 - HTTP-only installation mode without certificate requirements.
 
 ### Improvements
-- CLI version updated to v5.7.0.
-- Web Panel version updated to v5.7.0.
+- CLI version updated to v5.8.0.
+- Web Panel version updated to v5.8.0.
 
 ## v5.6.4
 

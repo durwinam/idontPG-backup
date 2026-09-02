@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.7.0
+#   idontPG-backup  v5.8.0
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 #   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB
@@ -74,7 +74,7 @@ import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
-VERSION = "5.7.0"
+VERSION = "5.8.0"
 
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
@@ -2079,6 +2079,10 @@ def create_backup(include_node=True):
             else:
                 print_warning(f"{PG_NODE_DATA_DIR} not found — skipped")
 
+        web_state = "/etc/idontPG-backup/web.json"
+        if os.path.exists(web_state):
+            shutil.copy2(web_state, os.path.join(tmp_dir, "idontpg_web_state.json"))
+
         print_info("Compressing archive...")
         # v4.2.1 — set a 0700 umask BEFORE make_archive so the .zip is
         # created with owner-only perms atomically. The previous
@@ -2429,32 +2433,27 @@ def _read_manifest_remote(ssh, db_dir):
     return db_type, entries
 
 def _verify_zip_has_manifest(zip_path):
-    """v4.2.4 — sanity-check a freshly-created backup archive BEFORE it's
-    uploaded anywhere. Opens the zip locally, looks for db_dump/manifest.tsv,
-    and confirms it has at least one non-comment, non-empty data row.
-    Returns True/False; prints its own error on failure so callers can just
-    check the return value."""
+    """Validate a freshly-created PasarGuard archive before it is uploaded."""
     try:
-        with zipfile.ZipFile(zip_path) as z:
-            names = z.namelist()
-            manifest_name = next(
-                (n for n in names if n.replace("\\", "/").rstrip("/") == "db_dump/manifest.tsv"),
-                None,
-            )
-            if not manifest_name:
+        with zipfile.ZipFile(zip_path) as zf:
+            names=[n.replace("\\","/").lstrip("./").rstrip("/") for n in zf.namelist() if n]
+            manifests=[n for n in names if n=="db_dump/manifest.tsv" or n.endswith("/db_dump/manifest.tsv")]
+            if not manifests:
                 print_error("Archive sanity check: db_dump/manifest.tsv is missing from the zip.")
-                print_error(f"  → Archive contains: {', '.join(sorted(names)) or '(empty)'}")
                 return False
-            raw = z.read(manifest_name).decode("utf-8", errors="replace")
-            data_rows = [
-                ln for ln in raw.splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
-            ]
-            if not data_rows:
+            mn=sorted(manifests,key=lambda x:(x.count("/"),len(x)))[0]
+            raw=zf.read(mn).decode("utf-8",errors="replace")
+            rows=[ln for ln in raw.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+            if not rows:
                 print_error("Archive sanity check: manifest.tsv has no database entries.")
                 return False
+            # Native PasarGuard backup should carry globals.sql for PG/Timescale.
+            if "db_type=postgresql" in raw or "db_type=timescaledb" in raw:
+                if not any(n=="db_dump/globals.sql" or n.endswith("/db_dump/globals.sql") for n in names):
+                    print_error("Archive sanity check: PostgreSQL/Timescale globals.sql is missing.")
+                    return False
             return True
-    except (zipfile.BadZipFile, OSError) as e:
+    except (zipfile.BadZipFile,OSError) as e:
         print_error(f"Archive sanity check failed: could not open {zip_path}: {e}")
         return False
 
@@ -2959,7 +2958,7 @@ def workflow_transfer():
         proxy = ask_telegram_proxy()
         print_info("Uploading to Telegram...")
         cap = (f"PasarGuard {'+ PG-Node ' if include_node else ''}Manual Transfer Backup\n"
-               f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+               f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\ndurwinam")
         success, details = send_telegram_backup_archive(zip_path, cap, bot_token, admin_id, proxy)
         if success: print_success("Sent to Telegram!")
         else:       print_error(f"Telegram upload failed: {details}")
@@ -3147,7 +3146,7 @@ def run_scheduled_backup_loop(bot_token, admin_id, interval_h, include_node, pro
             if zip_path and os.path.exists(zip_path):
                 print_info("Uploading to Telegram...")
                 cap = (f"PasarGuard {'+ PG-Node ' if include_node else ''}Auto Backup\n"
-                       f"Date: {now_str}\nInterval: {interval_h}h")
+                       f"Date: {now_str}\nInterval: {interval_h}h\ndurwinam")
                 success, details = send_telegram_backup_archive(zip_path, cap, bot_token, admin_id, proxy)
                 if success: print_success("Backup sent to Telegram!")
                 else:       print_error(f"Send failed: {details}")
@@ -3658,7 +3657,7 @@ def _download_update_file(url, dest, timeout=45):
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "idontPG-backup-updater/5.7.0"},
+            headers={"User-Agent": "idontPG-backup-updater/5.8.0"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
