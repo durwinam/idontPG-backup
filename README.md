@@ -1,5 +1,3 @@
-
-> **v5.8.0 note:** Restore/Migration UI is intentionally not included in this release. The existing Backup, Telegram, Scheduler, monitoring and account features remain available. Restore will be reintroduced in a dedicated next update after its workflow is finalized.
 <div align="center">
 
 **🇮🇷 فارسی | 🇬🇧 English | 🇷🇺 Русский**
@@ -40,7 +38,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.0-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -179,7 +177,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.0
+Available in v5.8.1
 
 قابلیت‌های پیشرفته زیر در نسخه‌های آینده اضافه خواهند شد:
 
@@ -246,7 +244,7 @@ A complete tool for managing backups, restoring data, and migrating
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.0-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -348,8 +346,8 @@ sending backups to Telegram, and restoring them on the destination server.
 | 📤 Manual Backup | Manually send backups |
 | 🤖 Telegram Bot Test | Send a test message to the Telegram bot |
 | ♻️ Restore | Web Panel & PasarGuard Restore Center |
-| 🚚 Migration | Available in v5.8.0 |
-| 🔄 Transfer | Available in v5.8.0 |
+| 🚚 Migration | Available in v5.8.1 |
+| 🔄 Transfer | Available in v5.8.1 |
 
 ---
 
@@ -398,7 +396,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.0
+Available in v5.8.1
 
 The following advanced features will be added in future versions:
 
@@ -469,7 +467,7 @@ https://docs.mypanelhome.ir
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.0-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -567,8 +565,8 @@ PasarGuard и PG-Node, созданный для упрощения процес
 | 📤 Manual Backup | Ручная отправка Backup |
 | 🤖 Telegram Bot Test | Отправка тестового сообщения Telegram-боту |
 | ♻️ Restore | Web Panel & PasarGuard Restore |
-| 🚚 Migration | Доступно в v5.8.0 |
-| 🔄 Transfer | Доступно в v5.8.0 |
+| 🚚 Migration | Доступно в v5.8.1 |
+| 🔄 Transfer | Доступно в v5.8.1 |
 
 # 🗄️ Поддержка движков баз данных
 
@@ -614,7 +612,7 @@ PasarGuard
 
 ---
 
-Доступно в v5.8.0
+Доступно в v5.8.1
 
 Следующие расширенные возможности будут добавлены в будущих версиях:
 

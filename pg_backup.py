@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.8.0
+#   idontPG-backup  v5.8.1
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 #   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB
@@ -74,7 +74,7 @@ import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
-VERSION = "5.8.0"
+VERSION = "5.8.1"
 
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
@@ -3657,7 +3657,7 @@ def _download_update_file(url, dest, timeout=45):
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "idontPG-backup-updater/5.8.0"},
+            headers={"User-Agent": "idontPG-backup-updater/5.8.1"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
@@ -3777,8 +3777,12 @@ def workflow_update(non_interactive=False):
             path = os.path.join(tmp_dir, name)
             print_info(f"Downloading {name} …")
             if not _download_update_file(url, path):
-                print_error("Update aborted. No installed files were changed.")
-                return False
+                if name == "web_panel.py" and os.path.isfile(UPDATE_FILES["web_panel.py"]):
+                    print_warning("GitHub Web Panel unavailable; keeping the currently installed Web Panel safely.")
+                    shutil.copy2(UPDATE_FILES["web_panel.py"], path)
+                else:
+                    print_error("Update aborted. No installed files were changed.")
+                    return False
             downloaded[name] = path
 
         # Never install a syntactically broken Python update.

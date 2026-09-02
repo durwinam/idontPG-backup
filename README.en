@@ -130,8 +130,8 @@ sending backups to Telegram, and restoring them on the destination server.
 | 📤 Manual Backup | Manually send backups |
 | 🤖 Telegram Bot Test | Send a test message to the Telegram bot |
 | ♻️ Restore | Web Panel & PasarGuard Restore Center |
-| 🚚 Migration | Available in v5.8.0 |
-| 🔄 Transfer | Available in v5.8.0 |
+| 🚚 Migration | Available in v5.8.1 |
+| 🔄 Transfer | Available in v5.8.1 |
 
 ---
 
@@ -180,7 +180,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.0
+Available in v5.8.1
 
 The following advanced features will be added in future versions:
 
