@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.9.8
+#   idontPG-backup  v5.8.2
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
 # #          (not just the legacy "pasarguard" database).
@@ -65,7 +65,7 @@ import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
-VERSION = "5.9.8"
+VERSION = "5.8.2"
 
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
@@ -2894,7 +2894,7 @@ def workflow_update(non_interactive=False):
         print_success(f"Installed CLI: {_read_installed_version(UPDATE_FILES['pg_backup.py'])}")
         print_success(f"Installed Web Panel: {_read_installed_version(UPDATE_FILES['web_panel.py'])}")
         if os.path.isfile(UPDATE_FILES["idont_bot.py"]):
-            print_success("Installed Telegram Management Bot: v5.9.8")
+            print_success("Installed Telegram Management Bot: v5.8.2")
         print_info("Existing backup credentials and scheduler configuration were preserved.")
         return True
 

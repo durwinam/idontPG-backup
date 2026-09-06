@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.9.8"
+VERSION = "5.8.9"
 STATE_DIR = Path("/etc/idontPG-backup")
 WEB_CONFIG = STATE_DIR / "web.json"
 BOT_CONFIG = STATE_DIR / "telegram_bot.json"
