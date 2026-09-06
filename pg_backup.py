@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 # ============================================================
-#   idontPG-backup  v5.8.1
+#   idontPG-backup  v5.8.2
 #   Dev by: durwinam
 #   GitHub: https://github.com/durwinam/idontPG-backup
-#   v4.0 — multi-database support: backs up & restores EVERY Pasarguard DB
-#          (not just the legacy "pasarguard" database).
+# #          (not just the legacy "pasarguard" database).
 #   v4.1 — full compatibility with the official PasarGuard panel
 #          (https://github.com/PasarGuard/panel): detects and handles all
 #          five supported backends — sqlite, postgresql, timescaledb, mysql,
 #          mariadb — including single-file sqlite backups, mysqldump for
 #          MySQL/MariaDB, and per-database pg_dump for PostgreSQL/TimescaleDB.
 #   v4.2 — security & bugfix pass:
-#          * fixed shell command injection in Manual Restore (zip filename
-#            was interpolated unquoted into a shell=True command)
-#          * fixed MySQL/MariaDB backup & restore: MYSQL_PWD is now passed
-#            into the container via `docker compose exec -e`, not set on the
+##            was interpolated unquoted into a shell=True command)
+##            into the container via `docker compose exec -e`, not set on the
 #            host process (which docker compose does not forward)
 #          * bot token / chat id no longer passed as plaintext CLI args
 #            (leaked via `ps`/`/proc/<pid>/cmdline` and world-readable
@@ -25,9 +22,7 @@
 #          * SSH host-key auto-accept now prints an explicit warning
 #          * Telegram Bot API's 50 MB per-file limit is fully handled:
 #            oversized backups are transparently split into numbered
-#            .001/.002/... chunks on send, and on the restore side
-#            (Manual Restore) the chunks are auto-detected, verified for
-#            completeness, and rejoined into the original archive before
+###            completeness, and rejoined into the original archive before
 #            extraction — no manual `cat` needed.
 #          * "Manage Backup Schedulers" can now restart an instance so it
 #            picks up the latest script code without deleting and
@@ -36,12 +31,10 @@
 #   v4.2.4 — 'manifest.tsv not found or empty' fail-fast pass:
 #          * new archive backup with no usable manifest.tsv is now caught
 #            LOCALLY right after it's created — in both Auto Transfer and
-#            Manual Restore — before any destination/local containers are
-#            stopped or directories wiped. Previously this failure was only
+##            stopped or directories wiped. Previously this failure was only
 #            discovered after a full upload + destination wipe + container
 #            restart, leaving the destination stopped with nothing to
-#            restore.
-#          * _read_manifest_remote now retries the remote file check once
+##          * _read_manifest_remote now retries the remote file check once
 #            after a short delay instead of failing on the first miss.
 #          * when the manifest genuinely is missing on the remote,
 #            diagnostics now include a `find -maxdepth 2` of the whole
@@ -63,18 +56,16 @@
 #            that v4.2 introduced, plus the unit/session name injection
 #            in `Manage Backup Schedulers`. shlex.quote() added to the
 #            same shell=True spots as defence-in-depth
-#          * SQLite restore target is now realpath-checked against
-#            /var/lib/pasarguard/ so a malicious backup's
+##            /var/lib/pasarguard/ so a malicious backup's
 #            SQLALCHEMY_DATABASE_URL can't redirect cp to /etc/cron.d etc.
 #          * manifest.sql_file is rejected if it contains `..`, `/`, or
-#            `\` (path-traversal in restore)
-# ============================================================
+## ============================================================
 
 import os, sys, subprocess, datetime, shutil, re, tempfile, hashlib, zipfile
 import time, urllib.request, urllib.error, uuid, threading, itertools
 import argparse, shlex, socket, getpass, json, stat
 
-VERSION = "5.8.1"
+VERSION = "5.8.2"
 
 # ── ANSI Colors ──────────────────────────────────────────────
 # Three red tones for hierarchy:
@@ -869,7 +860,7 @@ def _pick_db_service(services, backend_type=None):
     database?" even on a MySQL install, which (a) was misleading and
     (b) caused a real failure when the picked container was then
     `pg_isready`'d by wait_postgres_* — pg_isready doesn't exist in a
-    mysql image, so the wait timed out and the whole restore aborted."""
+    mysql image, so the wait timed out and the the database operation aborted."""
     bt = (backend_type or "postgresql").lower()
     default_svc = _DEFAULT_DB_SERVICE.get(bt, "timescaledb") or "timescaledb"
 
@@ -1304,7 +1295,7 @@ def wait_db_local(svc, backend_type=None):
     v4.2.2 — renamed from wait_postgres_local and made backend-aware.
     Previously this always exec'd `pg_isready` into the picked container,
     which crashed on mysql/mariadb images (no such binary) and made the
-    whole restore abort with 'mysql did not start'. Now picks the right
+    the database operation abort with 'mysql did not start'. Now picks the right
     readiness probe per backend:
       - postgresql / timescaledb → pg_isready -U pasarguard -d postgres
       - mysql / mariadb          → mysqladmin ping -uroot -h 127.0.0.1
@@ -1501,7 +1492,7 @@ def clean_dirs_ssh(ssh, include_node=True):
 # directory already contains a database (i.e. it survived from a
 # previous run on the destination host), MySQL keeps the OLD password
 # and silently ignores the new one in .env — leading to "Access denied
-# (1045)" errors during restore, even though the .env we just extracted
+# (1045)" errors during database checks, even though the .env we just extracted
 # has the right password.
 #
 # Docker's own `docker compose down -v` only removes Docker NAMED
@@ -1618,7 +1609,7 @@ def _wipe_mysql_data_remote(ssh, svc):
 
     Returns True on success (or when there's nothing to wipe), False if
     the wipe itself failed and we couldn't recover. We do NOT abort the
-    whole transfer on failure — the existing restore code will try
+    whole operation on failure — the previous migration code would try
     anyway and surface a precise 1045 error if the data really is
     stale, which is more informative than silently bailing here."""
     ec, compose_text, _ = ssh_shell(ssh,
@@ -1649,7 +1640,7 @@ def _wipe_mysql_data_remote(ssh, svc):
             "If MySQL has stale data on a bind mount that survived `docker compose down -v`,"
         )
         print_warning(
-            "restore may fail with 1045 'Access denied'. Wipe the host data dir manually if so."
+            "database access may fail with 1045 'Access denied'. Check the host data directory if needed."
         )
         return True
 
@@ -1723,7 +1714,7 @@ def _wipe_mysql_data_local(svc):
             "If MySQL has stale data on a bind mount that survived `docker compose down -v`,"
         )
         print_warning(
-            "restore may fail with 1045 'Access denied'. Wipe the host data dir manually if so."
+            "database access may fail with 1045 'Access denied'. Check the host data directory if needed."
         )
         return True
 
@@ -2132,10 +2123,10 @@ def _backup_postgres_local(backend, db_dir):
     # The previous order opened manifest.tsv for writing before any
     # pg_dump ran, and the dump's return code was ignored — so a fully
     # failed backup would still leave a "complete" manifest on disk.
-    # On restore the dispatcher would happily walk that manifest and try
+    # The manifest is kept deterministic so backup consumers can process it safely.
     # to load the (empty) .sql files, producing the misleading
     # 'manifest.tsv not found or empty' error elsewhere because the
-    # database restore itself silently produced nothing.
+    # database export itself silently produced nothing.
     print_info("Exporting PostgreSQL globals (pg_dumpall)...")
     globals_ok = run_command(
         f"docker compose exec -T {shlex.quote(svc)} pg_dumpall -U {shlex.quote(user)} --globals-only",
@@ -2168,7 +2159,7 @@ def _backup_postgres_local(backend, db_dir):
         )
         print_error("Re-run the backup once the underlying pg_dump / connection issue is fixed.")
         # Clean up the partial .sql files so they don't get picked up as a
-        # 'complete' backup on a future manual restore.
+        # incomplete backup artifacts from being mistaken for complete archives.
         for db, sql_file, _, _, ok in results:
             if not ok:
                 try:
@@ -2271,11 +2262,11 @@ def _backup_mysql_local(backend, db_dir):
         try:
             with open(out_path, "w") as _f:
                 # v4.2.2 — added --databases (== -B). Without it mysqldump
-                # writes only CREATE TABLE statements; on restore the
+                # writes only CREATE TABLE statements; downstream consumers can
                 # target database doesn't exist yet (fresh MySQL on a new
                 # server) and every statement blows up with "No database
                 # selected". --databases prepends CREATE DATABASE and USE,
-                # so the dump is self-sufficient on restore.
+                # so the dump remains self-contained.
                 subprocess.run(
                     f"docker compose exec -T {env_flag}{shlex.quote(svc)} mysqldump "
                     f"--databases --single-transaction --quick --triggers "
@@ -2338,795 +2329,6 @@ def _backup_sqlite_local(backend, db_dir):
         mf.write(f"{os.path.splitext(dst_name)[0]}\tpasarguard\t0\t{dst_name}\t\n")
     print_success("Wrote manifest for SQLite database.")
     return True
-
-# ── Workflow 1: Transfer to new server ───────────────────────
-def _read_manifest(db_dir):
-    manifest_path = os.path.join(db_dir, "manifest.tsv")
-    if not os.path.exists(manifest_path):
-        return None, []
-    db_type = None
-    entries = []
-    with open(manifest_path) as f:
-        for raw in f:
-            line = raw.rstrip("\n")
-            if not line.strip() or line.lstrip().startswith("#"):
-                if "db_type=" in line:
-                    for part in line.split():
-                        if part.startswith("db_type="):
-                            db_type = part.split("=", 1)[1]
-                continue
-            cols = line.split("\t")
-            if len(cols) < 4:
-                continue
-            db       = cols[0]
-            sql_file = cols[3]
-            has_ts   = cols[2] == "1" if len(cols) > 2 else False
-            ts_ver   = cols[4] if len(cols) > 4 else ""
-            if db and sql_file:
-                entries.append((db, sql_file, has_ts, ts_ver))
-    if not db_type:
-        if any(f.endswith(".sqlite3") or f.endswith(".sqlite") or f == "db_backup.sqlite" for _, f, _, _ in entries):
-            db_type = "sqlite"
-        elif os.path.exists(os.path.join(db_dir, "globals.sql")):
-            db_type = "postgresql"
-        elif any(f.endswith(".sql") for _, f, _, _ in entries):
-            db_type = "mysql"
-    return db_type, entries
-
-def _read_manifest_remote(ssh, db_dir):
-    """v4.2.2 — read manifest.tsv from the REMOTE host via SSH.
-
-    The previous code path used the purely-local `_read_manifest()`
-    inside `_restore_databases_remote`, so the transfer-to-new-server
-    flow would always see an empty manifest — even when the file was
-    sitting on the remote at /opt/pasarguard/db_dump/manifest.tsv.
-    Symptom: 'manifest.tsv not found or empty — cannot restore
-    databases' immediately after a successful `unzip` and a green
-    Pasarguard DB startup, which (correctly) told the user nothing
-    about why the restore was failing.
-
-    We now `cat` the file over SSH and run it through the same parser
-    logic. db_dir is the relative path on the remote (typically
-    'db_dump') — joined onto PASARGUARD_DIR for the SSH commands.
-    Returns (db_type, entries) just like _read_manifest, or (None, [])
-    if the file doesn't exist or can't be read."""
-    remote_manifest = f"{PASARGUARD_DIR}/{db_dir}/manifest.tsv"
-    ec, _, _ = ssh_shell(ssh, f"test -f {shlex.quote(remote_manifest)}")
-    if ec != 0:
-        # v4.2.4 — one short retry before giving up. Harmless in the
-        # normal case (extraction already finished synchronously via
-        # execute_ssh_command's recv_exit_status), but cheap insurance
-        # against any environment where the SFTP/SSH session sees a
-        # stale directory listing for a moment after `unzip` returns.
-        time.sleep(1.5)
-        ec, _, _ = ssh_shell(ssh, f"test -f {shlex.quote(remote_manifest)}")
-    if ec != 0:
-        return None, []
-    ec, text, _ = ssh_shell(ssh, f"cat {shlex.quote(remote_manifest)}")
-    if ec != 0 or not text:
-        return None, []
-
-    db_type = None
-    entries = []
-    for raw in text.splitlines():
-        line = raw.rstrip("\n")
-        if not line.strip() or line.lstrip().startswith("#"):
-            if "db_type=" in line:
-                for part in line.split():
-                    if part.startswith("db_type="):
-                        db_type = part.split("=", 1)[1]
-            continue
-        cols = line.split("\t")
-        if len(cols) < 4:
-            continue
-        db       = cols[0]
-        sql_file = cols[3]
-        has_ts   = cols[2] == "1" if len(cols) > 2 else False
-        ts_ver   = cols[4] if len(cols) > 4 else ""
-        if db and sql_file:
-            entries.append((db, sql_file, has_ts, ts_ver))
-    if not db_type:
-        if any(f.endswith(".sqlite3") or f.endswith(".sqlite") or f == "db_backup.sqlite" for _, f, _, _ in entries):
-            db_type = "sqlite"
-        elif entries:
-            db_type = "postgresql"
-    return db_type, entries
-
-def _verify_zip_has_manifest(zip_path):
-    """Validate a freshly-created PasarGuard archive before it is uploaded."""
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            names=[n.replace("\\","/").lstrip("./").rstrip("/") for n in zf.namelist() if n]
-            manifests=[n for n in names if n=="db_dump/manifest.tsv" or n.endswith("/db_dump/manifest.tsv")]
-            if not manifests:
-                print_error("Archive sanity check: db_dump/manifest.tsv is missing from the zip.")
-                return False
-            mn=sorted(manifests,key=lambda x:(x.count("/"),len(x)))[0]
-            raw=zf.read(mn).decode("utf-8",errors="replace")
-            rows=[ln for ln in raw.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-            if not rows:
-                print_error("Archive sanity check: manifest.tsv has no database entries.")
-                return False
-            # Native PasarGuard backup should carry globals.sql for PG/Timescale.
-            if "db_type=postgresql" in raw or "db_type=timescaledb" in raw:
-                if not any(n=="db_dump/globals.sql" or n.endswith("/db_dump/globals.sql") for n in names):
-                    print_error("Archive sanity check: PostgreSQL/Timescale globals.sql is missing.")
-                    return False
-            return True
-    except (zipfile.BadZipFile,OSError) as e:
-        print_error(f"Archive sanity check failed: could not open {zip_path}: {e}")
-        return False
-
-def _diagnose_missing_manifest(db_dir, *, ssh=None):
-    """v4.2.2 — when _read_manifest finds nothing, print useful diagnostics
-    instead of the bare 'manifest.tsv not found or empty'. Tells the user
-    whether db_dir even exists, what files it contains (if any), and
-    points at likely root causes (incomplete extraction, backup from an
-    older script version, mid-backup dump failure, etc.)."""
-    print_error("manifest.tsv not found or empty — cannot restore databases.")
-
-    if ssh is not None:
-        # v4.2.2 — db_dir is relative ("db_dump") and lives under
-        # PASARGUARD_DIR on the remote. cd first so the relative path
-        # resolves correctly; the previous bare `ls -la db_dump` would
-        # look in the SSH session's home (~root) and always report
-        # "does not exist" even when /opt/pasarguard/db_dump was fine.
-        ec, out, _ = ssh_shell(ssh,
-            f"cd {shlex.quote(PASARGUARD_DIR)} && ls -la {shlex.quote(db_dir)} 2>/dev/null")
-        if ec != 0 or not out.strip():
-            print_error(f"  → {PASARGUARD_DIR}/{db_dir} does not exist on the remote host.")
-            print_error("     The backup archive probably didn't extract. Check free disk space,")
-            print_error("     permissions on /opt/pasarguard/, and the 'Extracting files' log.")
-            # v4.2.4 — show what actually IS in PASARGUARD_DIR, since
-            # "the directory doesn't exist" alone doesn't tell you whether
-            # the zip extracted somewhere else, extracted empty, or never
-            # landed on disk at all.
-            ec2, tree, _ = ssh_shell(ssh,
-                f"find {shlex.quote(PASARGUARD_DIR)} -maxdepth 2 2>/dev/null")
-            if ec2 == 0 and tree.strip():
-                print_error(f"  → Actual contents of {PASARGUARD_DIR} (depth 2):")
-                for line in tree.splitlines():
-                    print_error(f"      {line}")
-            return
-        print_error(f"  → Remote {PASARGUARD_DIR}/{db_dir}/ contents:")
-        for line in out.splitlines():
-            print_error(f"      {line}")
-        files = [ln.split()[-1] for ln in out.splitlines() if ln.startswith("-")]
-    else:
-        if not os.path.isdir(db_dir):
-            print_error(f"  → {db_dir} does not exist locally.")
-            print_error("     The backup archive probably didn't extract. Check the 'Extracting' log.")
-            return
-        try:
-            files = sorted(os.listdir(db_dir))
-        except OSError as e:
-            print_error(f"  → Cannot list {db_dir}: {e}")
-            return
-        if not files:
-            print_error(f"  → {db_dir} is empty (no files extracted).")
-            return
-        print_error(f"  → Local {db_dir}/ contents: {', '.join(files)}")
-
-    has_sql    = any(f.endswith(".sql") for f in files)
-    has_sqlite = any(f.endswith(".sqlite") or f.endswith(".sqlite3") for f in files)
-    manifest_present = "manifest.tsv" in files
-
-    if manifest_present:
-        print_error("  → manifest.tsv exists but has no usable data rows.")
-        print_error("     Check that the backup was created by a compatible version of this")
-        print_error("     script (v4.0+ writes tab-separated rows; older versions used spaces).")
-    elif has_sql:
-        print_error("  → .sql files exist but manifest.tsv is missing.")
-        print_error("     The backup may have been created with an older version of this script,")
-        print_error("     OR pg_dump / mysqldump failed mid-run (in v4.2.2 the manifest is only")
-        print_error("     written when ALL dumps succeed — run the backup again to recreate it).")
-    elif has_sqlite:
-        print_error("  → SQLite db file exists but manifest.tsv is missing.")
-        print_error("     The backup may be from an older script version or be incomplete.")
-    else:
-        print_error("  → No SQL or SQLite files found. The backup appears incomplete.")
-        print_error("     Re-download / re-upload the archive and try again.")
-
-# ── Per-backend restore dispatchers ──────────────────────────
-def _is_safe_restore_target(path, allowed_prefix):
-    """Return True if `path` (after symlink resolution) is inside
-    `allowed_prefix`. v4.2.1 — defends against a malicious backup whose
-    .env sets SQLALCHEMY_DATABASE_URL to a path outside /var/lib/pasarguard/
-    (e.g. /etc/cron.d/evil). Without this, restoring such a backup would
-    silently overwrite an arbitrary file on disk."""
-    try:
-        real_prefix = os.path.realpath(allowed_prefix)
-        real_path   = os.path.realpath(path)
-        return (real_path.startswith(real_prefix.rstrip(os.sep) + os.sep)
-                or real_path == real_prefix)
-    except Exception:
-        return False
-
-def _safe_extract_zip(zip_path, dest):
-    """Extract `zip_path` into `dest` using Python's zipfile module, after
-    validating EVERY member refuses to escape `dest` via `..`, absolute
-    paths, or symlinks. v4.2.1 — replaces `unzip -q -o` because that
-    command happily extracts an entry like `../../etc/cron.d/evil` straight
-    to that path on disk (Zip Slip). With the script running as root, this
-    was a one-backup-away RCE on the restore host."""
-    import zipfile as _zipfile
-    dest_real = os.path.realpath(dest)
-    try:
-        zf = _zipfile.ZipFile(zip_path)
-    except Exception as e:
-        raise ValueError(f"could not open zip {zip_path!r}: {e}")
-    with zf:
-        for member in zf.namelist():
-            # Reject absolute paths and any entry whose joined realpath
-            # would leave dest. Also reject symlinks pointing outside.
-            member_path = os.path.realpath(os.path.join(dest_real, member))
-            if not (member_path == dest_real
-                    or member_path.startswith(dest_real + os.sep)):
-                raise ValueError(f"zip-slip entry refused: {member!r}")
-            info = zf.getinfo(member)
-            # mode 0o12xxxx in the external_attr is a symlink; bail on those
-            # too — a zip can carry symlinks that resolve outside dest.
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise ValueError(f"symlink entry refused: {member!r}")
-        # Safe to extract.
-        zf.extractall(dest_real)
-
-
-def _restore_databases_remote(ssh, db_dir, remote_db_svc, backend_type=None):
-    # v4.2.2 — manifest.tsv lives on the REMOTE host after extraction,
-    # so we read it via SSH (see _read_manifest_remote), not locally.
-    db_type, entries = _read_manifest_remote(ssh, db_dir)
-    if not entries:
-        _diagnose_missing_manifest(db_dir, ssh=ssh)
-        return False
-    effective_type = backend_type or db_type or "postgresql"
-    print_info(f"Manifest declares backend: {effective_type}  ({len(entries)} database entr{'y' if len(entries)==1 else 'ies'})")
-
-    if effective_type in ("postgresql", "timescaledb"):
-        return _restore_postgres_remote(ssh, db_dir, remote_db_svc, entries)
-    if effective_type in ("mysql", "mariadb"):
-        return _restore_mysql_remote(ssh, db_dir, remote_db_svc, entries)
-    if effective_type == "sqlite":
-        return _restore_sqlite_remote(ssh, db_dir, entries)
-    print_error(f"Unsupported backend in manifest: '{effective_type}'")
-    return False
-
-def _restore_databases_local(db_dir, local_db_svc, backend_type=None):
-    db_type, entries = _read_manifest(db_dir)
-    if not entries:
-        _diagnose_missing_manifest(db_dir)
-        return False
-    effective_type = backend_type or db_type or "postgresql"
-    print_info(f"Manifest declares backend: {effective_type}  ({len(entries)} database entr{'y' if len(entries)==1 else 'ies'})")
-
-    if effective_type in ("postgresql", "timescaledb"):
-        return _restore_postgres_local(db_dir, local_db_svc, entries)
-    if effective_type in ("mysql", "mariadb"):
-        return _restore_mysql_local(db_dir, local_db_svc, entries)
-    if effective_type == "sqlite":
-        return _restore_sqlite_local(db_dir, entries)
-    print_error(f"Unsupported backend in manifest: '{effective_type}'")
-    return False
-
-# ── PostgreSQL / TimescaleDB remote restore ───────────────────
-def _restore_postgres_remote(ssh, db_dir, svc, entries):
-    print_info("Restoring globals.sql (roles / tablespaces / shared grants)...")
-    if not execute_ssh_command(
-        ssh,
-        f"cd {PASARGUARD_DIR} && cat {shlex.quote(db_dir)}/globals.sql | "
-        f"docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres",
-        "Restoring globals.sql",
-        required=True,
-    ):
-        return False
-
-    for db, sql_file, _has_ts, _ts_ver in entries:
-        # v4.2.1 — sql_file comes from manifest.tsv in the backup. Reject
-        # path-traversal (`..`, `/`, `\`) before it lands in the cp/cat
-        # command. shlex.quote alone would NOT stop `..` because the OS
-        # still resolves it as a path component.
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        ident = _ident(db)
-        print_info(f"Recreating database {C.BOLD}{db}{C.RESET}...")
-        execute_ssh_command(
-            ssh,
-            f"cd {PASARGUARD_DIR} && docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres "
-            f"-c {shlex.quote(f'DROP DATABASE IF EXISTS {ident} WITH (FORCE);')}",
-            f"Dropping old database '{db}'",
-            required=False,
-        )
-        if not execute_ssh_command(
-            ssh,
-            f"cd {PASARGUARD_DIR} && docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres "
-            f"-c {shlex.quote(f'CREATE DATABASE {ident};')}",
-            f"Creating database '{db}'",
-            required=True,
-        ):
-            return False
-        print_info(f"Restoring {sql_file} → {db}  (may take a while)...")
-        if not execute_ssh_command(
-            ssh,
-            f"cd {PASARGUARD_DIR} && cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} | "
-            f"docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d {shlex.quote(db)}",
-            f"Restoring {sql_file}",
-            required=True,
-        ):
-            return False
-    return True
-
-# ── PostgreSQL / TimescaleDB local restore ────────────────────
-def _restore_postgres_local(db_dir, svc, entries):
-    print_info("Restoring globals.sql (roles / tablespaces / shared grants)...")
-    if not run_command(
-        f"cd {PASARGUARD_DIR} && cat {shlex.quote(db_dir)}/globals.sql | "
-        f"docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres"
-    ):
-        print_error("Failed to restore globals.sql")
-        return False
-
-    for db, sql_file, _has_ts, _ts_ver in entries:
-        # v4.2.1 — sql_file comes from manifest.tsv. Reject path traversal
-        # before the path is concatenated into a cat | psql pipeline.
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        ident = _ident(db)
-        print_info(f"Recreating database {C.BOLD}{db}{C.RESET}...")
-        run_command(
-            f"cd {PASARGUARD_DIR} && docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres "
-            f"-c {shlex.quote(f'DROP DATABASE IF EXISTS {ident} WITH (FORCE);')}"
-        )
-        if not run_command(
-            f"cd {PASARGUARD_DIR} && docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d postgres "
-            f"-c {shlex.quote(f'CREATE DATABASE {ident};')}"
-        ):
-            print_error(f"Failed to create database '{db}'")
-            return False
-        print_info(f"Restoring {sql_file} → {db}  (may take a while)...")
-        if not run_command(
-            f"cd {PASARGUARD_DIR} && cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} | "
-            f"docker compose exec -T {shlex.quote(svc)} psql -U pasarguard -d {shlex.quote(db)}"
-        ):
-            print_error(f"Failed to restore {sql_file}")
-            return False
-    return True
-
-# ── MySQL / MariaDB remote restore ────────────────────────────
-def _restore_mysql_remote(ssh, db_dir, svc, entries):
-    for db, sql_file, _, _ in entries:
-        # v4.2.1 — reject path traversal in sql_file (manifest-controlled).
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        print_info(f"Restoring {db} from {sql_file}  (may take a while)...")
-
-        ec, env_text, _ = ssh_shell(ssh, f"grep -E '^(DB_PASSWORD|MYSQL_ROOT_PASSWORD|DB_USER|DB_NAME)=' {PASARGUARD_DIR}/.env")
-        env_lines = {}
-        for ln in env_text.splitlines():
-            if "=" in ln:
-                k, v = ln.split("=", 1)
-                env_lines[k.strip()] = v.strip().strip('"').strip("'")
-        root_pwd = env_lines.get("MYSQL_ROOT_PASSWORD", "")
-        user_pwd = env_lines.get("DB_PASSWORD", "")
-        user     = env_lines.get("DB_USER", "root")
-
-        candidates = []
-        if user and user_pwd:
-            candidates.append((user, user_pwd))
-        if root_pwd and ("root", root_pwd) not in candidates:
-            candidates.append(("root", root_pwd))
-
-        # v4.2.2 — figure out whether the dump is self-sufficient
-        # (contains its own CREATE DATABASE / USE statements, i.e. it was
-        # produced by mysqldump --databases) or not (an older dump
-        # without --databases that only contains CREATE TABLE).
-        #   * Self-sufficient dumps are loaded as-is via `mysql -u USER`.
-        #   * Older dumps need CREATE DATABASE + USE prepended in a
-        #     subshell pipe; otherwise every CREATE TABLE in the dump
-        #     would fail with 'No database selected' on a freshly-
-        #     initialised MySQL container.
-        # Either way we deliberately avoid `mysql -e "..."` because on
-        # MariaDB images without /etc/mysql/my.cnf the client then errors
-        # out with 'no configuration file provided: not found' (a MariaDB
-        # quirk) instead of running the statement.
-        dump_path = f"{PASARGUARD_DIR}/{db_dir}/{sql_file}"
-        ec_probe, head_text, _ = ssh_shell(ssh, f"head -n 20 {shlex.quote(dump_path)}")
-        dump_has_create_db = ec_probe == 0 and "CREATE DATABASE" in (head_text or "")
-
-        restored = False
-        last_err = ""
-        for cred_user, cred_pwd in candidates:
-            env_flag = f"-e MYSQL_PWD={shlex.quote(cred_pwd)} " if cred_pwd else ""
-            if dump_has_create_db:
-                cmd = (
-                    f"cd {PASARGUARD_DIR} && "
-                    f"cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} | "
-                    f"docker compose exec -T {env_flag}{shlex.quote(svc)} "
-                    f"mysql -u {shlex.quote(cred_user)}"
-                )
-            else:
-                # Prepend CREATE DATABASE + USE in a subshell so the dump's
-                # CREATE TABLE statements have a database to land in.
-                # echo + single-quoted SQL keeps backticks literal so mysql
-                # (not the shell) interprets them as identifier delimiters.
-                create_echo = (
-                    f"echo 'CREATE DATABASE IF NOT EXISTS `{db}` "
-                    f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'"
-                )
-                use_echo = f"echo 'USE `{db}`;'"
-                cmd = (
-                    f"cd {PASARGUARD_DIR} && "
-                    f"( {create_echo} ; {use_echo} ; "
-                    f"cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} ) | "
-                    f"docker compose exec -T {env_flag}{shlex.quote(svc)} "
-                    f"mysql -u {shlex.quote(cred_user)}"
-                )
-            ec2, _, err2 = ssh_shell(ssh, cmd)
-            if ec2 == 0:
-                print_success(f"Restored using credentials for user '{cred_user}'.")
-                restored = True
-                break
-            last_err = err2 or ""
-            first_line = next((ln for ln in last_err.splitlines() if ln.strip()), "unknown error")
-            print_warning(f"  Restore as '{cred_user}' failed: {first_line}")
-
-        if not restored:
-            print_error(f"Failed to restore {sql_file} with any known credentials.")
-            if last_err.strip():
-                print_error(f"Last mysql error:\n{last_err.strip()}")
-            print_error("Likely causes: wrong password in .env, MySQL still")
-            print_error("initialising (initdb scripts create users/databases after")
-            print_error("first start), or the dump file is empty/corrupt.")
-            return False
-    return True
-
-# ── MySQL / MariaDB local restore ─────────────────────────────
-def _restore_mysql_local(db_dir, svc, entries):
-    env = _read_env_file(os.path.join(PASARGUARD_DIR, ".env"))
-    root_pwd = env.get("MYSQL_ROOT_PASSWORD", "")
-    user_pwd = env.get("DB_PASSWORD", "")
-    user     = env.get("DB_USER", "root")
-
-    candidates = []
-    if user and user_pwd:
-        candidates.append((user, user_pwd))
-    if root_pwd and ("root", root_pwd) not in candidates:
-        candidates.append(("root", root_pwd))
-
-    for db, sql_file, _, _ in entries:
-        # v4.2.1 — reject path traversal in sql_file (manifest-controlled).
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        print_info(f"Restoring {db} from {sql_file}  (may take a while)...")
-
-        # v4.2.2 — same --databases-detection + subshell-prepend fix as
-        # _restore_mysql_remote. See comment there for the full rationale.
-        dump_path = os.path.join(PASARGUARD_DIR, db_dir, sql_file)
-        try:
-            with open(dump_path, "r", errors="replace") as _df:
-                head_text = "".join(iter(lambda: _df.readline(), ""))
-                # Read up to 20 lines to detect the CREATE DATABASE.
-                head_text += _df.read(64 * 1024)  # first ~64KB covers the header
-        except OSError:
-            head_text = ""
-        dump_has_create_db = "CREATE DATABASE" in head_text
-
-        restored = False
-        last_err = ""
-        for cred_user, cred_pwd in candidates:
-            env_flag = f"-e MYSQL_PWD={shlex.quote(cred_pwd)} " if cred_pwd else ""
-            if dump_has_create_db:
-                cmd = (
-                    f"cd {PASARGUARD_DIR} && "
-                    f"cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} | "
-                    f"docker compose exec -T {env_flag}{shlex.quote(svc)} "
-                    f"mysql -u {shlex.quote(cred_user)}"
-                )
-            else:
-                create_echo = (
-                    f"echo 'CREATE DATABASE IF NOT EXISTS `{db}` "
-                    f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'"
-                )
-                use_echo = f"echo 'USE `{db}`;'"
-                cmd = (
-                    f"cd {PASARGUARD_DIR} && "
-                    f"( {create_echo} ; {use_echo} ; "
-                    f"cat {shlex.quote(db_dir)}/{shlex.quote(sql_file)} ) | "
-                    f"docker compose exec -T {env_flag}{shlex.quote(svc)} "
-                    f"mysql -u {shlex.quote(cred_user)}"
-                )
-            try:
-                subprocess.run(cmd, shell=True, check=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                               cwd=PASARGUARD_DIR)
-                print_success(f"Restored using credentials for user '{cred_user}'.")
-                restored = True
-                break
-            except subprocess.CalledProcessError as e:
-                last_err = e.stderr.decode("utf-8", errors="replace").strip() if e.stderr else ""
-                first_line = next((ln for ln in last_err.splitlines() if ln.strip()), "unknown error")
-                print_warning(f"  Restore as '{cred_user}' failed: {first_line}")
-
-        if not restored:
-            print_error(f"Failed to restore {sql_file} with any known credentials.")
-            if last_err:
-                print_error(f"Last mysql error:\n{last_err}")
-            return False
-    return True
-
-# ── SQLite remote restore ─────────────────────────────────────
-def _restore_sqlite_remote(ssh, db_dir, entries):
-    for db, sql_file, _, _ in entries:
-        # v4.2.1 — sql_file comes from a backup's manifest.tsv. Reject
-        # path-traversal attempts (`../etc/passwd`) before concatenating
-        # into the cp command. shlex.quote alone would not stop `..`
-        # because the OS still resolves it.
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        ec, env_text, _ = ssh_shell(ssh, f"grep -E '^SQLALCHEMY_DATABASE_URL=' {PASARGUARD_DIR}/.env")
-        target = "/var/lib/pasarguard/db.sqlite3"
-        if "=" in env_text:
-            url = env_text.split("=", 1)[1].strip().strip('"').strip("'")
-            path = url.split("://", 1)[-1].lstrip("/")
-            if path and not path.startswith(":"):
-                candidate = "/" + path
-                # v4.2.1 — only allow restore targets under /var/lib/pasarguard/.
-                # A malicious backup's .env could set SQLALCHEMY_DATABASE_URL
-                # to point anywhere on disk; we refuse anything else.
-                allowed_prefix = "/var/lib/pasarguard/"
-                if not _is_safe_restore_target(candidate, allowed_prefix):
-                    print_error(f"Refusing unsafe SQLite target {candidate!r} — must be under {allowed_prefix}.")
-                    return False
-                target = candidate
-        print_info(f"Restoring SQLite database → {target}")
-        execute_ssh_command(ssh, "cd /opt/pasarguard && docker compose stop pasarguard", "Stopping panel", required=False)
-        execute_ssh_command(ssh, f"rm -f {shlex.quote(target)} {shlex.quote(target)}-wal {shlex.quote(target)}-shm", "Removing old SQLite + WAL/SHM", required=False)
-        if not execute_ssh_command(
-            ssh,
-            f"cp {shlex.quote(db_dir)}/{shlex.quote(sql_file)} {shlex.quote(target)} && chmod 0644 {shlex.quote(target)}",
-            f"Restoring SQLite file {sql_file}",
-            required=True,
-        ):
-            return False
-        execute_ssh_command(ssh, "cd /opt/pasarguard && docker compose start pasarguard", "Starting panel", required=False)
-    return True
-
-# ── SQLite local restore ──────────────────────────────────────
-def _restore_sqlite_local(db_dir, entries):
-    env = _read_env_file(os.path.join(PASARGUARD_DIR, ".env"))
-    target = "/var/lib/pasarguard/db.sqlite3"
-    url = env.get("SQLALCHEMY_DATABASE_URL", "")
-    if url.startswith("sqlite"):
-        path = url.split("://", 1)[-1].lstrip("/")
-        if path and not path.startswith(":"):
-            candidate = "/" + path
-            # v4.2.1 — only allow restore targets under /var/lib/pasarguard/.
-            allowed_prefix = "/var/lib/pasarguard/"
-            if not _is_safe_restore_target(candidate, allowed_prefix):
-                print_error(f"Refusing unsafe SQLite target {candidate!r} — must be under {allowed_prefix}.")
-                return False
-            target = candidate
-
-    for db, sql_file, _, _ in entries:
-        # v4.2.1 — sql_file comes from manifest.tsv in the archive. A
-        # malicious backup could include `../etc/passwd` here to escape
-        # `db_dir`. Reject anything with path separators or traversal.
-        if ".." in sql_file or "/" in sql_file or "\\" in sql_file:
-            print_error(f"Refusing unsafe manifest entry {sql_file!r} — path traversal is not allowed.")
-            return False
-        print_info(f"Restoring SQLite database → {target}")
-        run_command("cd /opt/pasarguard && docker compose stop pasarguard", quiet=True)
-        run_command(f"rm -f {shlex.quote(target)} {shlex.quote(target)}-wal {shlex.quote(target)}-shm", quiet=True)
-        if not run_command(
-            f"cp {shlex.quote(os.path.join(db_dir, sql_file))} {shlex.quote(target)} && chmod 0644 {shlex.quote(target)}"
-        ):
-            print_error(f"Failed to restore SQLite file {sql_file}")
-            return False
-        run_command("cd /opt/pasarguard && docker compose start pasarguard", quiet=True)
-    return True
-
-def workflow_transfer():
-    print_header("Auto Backup & Transfer to New Server")
-
-    include_node = ask_backup_scope()
-    zip_path = create_backup(include_node)
-    if not zip_path or not os.path.exists(zip_path):
-        print_error("Aborting — backup failed.")
-        return
-
-    # v4.2.4 — verify the archive actually contains a usable manifest
-    # BEFORE we spend time uploading it, wiping the destination server,
-    # and only THEN discovering the restore has nothing to work with.
-    # This is the same check the remote side does, run locally first so
-    # a broken backup fails fast with the local files still on disk to
-    # inspect, instead of failing after the destination is already wiped.
-    if not _verify_zip_has_manifest(zip_path):
-        print_error("Aborting — refusing to transfer a backup with no usable "
-                     "database manifest. Re-run 'Manual Backup' and check the "
-                     "'Exporting database...' step above for errors.")
-        return
-
-    print()
-    send_tg = input(f"  {C.R2}> Send backup to Telegram first? (y/n): {C.RESET}").strip().lower()
-    if send_tg == "y":
-        bot_token = input(f"  {C.R2}> Bot Token: {C.RESET}").strip()
-        admin_id  = input(f"  {C.R2}> Admin Chat ID: {C.RESET}").strip()
-        proxy = ask_telegram_proxy()
-        print_info("Uploading to Telegram...")
-        cap = (f"PasarGuard {'+ PG-Node ' if include_node else ''}Manual Transfer Backup\n"
-               f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\ndurwinam")
-        success, details = send_telegram_backup_archive(zip_path, cap, bot_token, admin_id, proxy)
-        if success: print_success("Sent to Telegram!")
-        else:       print_error(f"Telegram upload failed: {details}")
-
-    print()
-    print(f"  {C.R1}{C.BOLD}--- New Server Information ---{C.RESET}")
-    new_ip   = input(f"  {C.R2}> New Server IP: {C.RESET}").strip()
-    confirm  = input(f"  {C.R1}> User MUST be root. Confirm? (y/n): {C.RESET}").strip().lower()
-    if confirm != "y":
-        print_error("Root access required. Aborting.")
-        return
-    # v4.2: use getpass so the root password isn't echoed to the terminal
-    # or left sitting in shell/screen scrollback.
-    new_pass = getpass.getpass(f"  {C.R2}> Root Password: {C.RESET}").strip()
-
-    print_info(f"Connecting to {new_ip}...")
-    ssh = paramiko.SSHClient()
-    # NOTE: this still auto-accepts unknown host keys (no TOFU verification
-    # against a known_hosts file), which is inherently weak against a
-    # man-in-the-middle on first connect. We at least surface that clearly
-    # instead of doing it silently — see warning below.
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    print_warning("SSH host key will be trusted on first connect (no verification). "
-                  "Make sure you're on a trusted network.")
-    try:
-        ssh.connect(hostname=new_ip, username="root", password=new_pass, timeout=10)
-        print_success("Connected!")
-        print()
-
-        execute_ssh_command(ssh,
-            "apt-get update >/dev/null 2>&1 && apt-get install -y unzip >/dev/null 2>&1",
-            "Installing unzip")
-
-        if include_node:
-            if not stop_compose_ssh(ssh, PG_NODE_DIR, "PG-Node"):
-                print_error("Could not stop PG-Node. Aborting.")
-                return
-        if not stop_compose_ssh(ssh, PASARGUARD_DIR, "Pasarguard"):
-            print_error("Could not stop Pasarguard. Aborting.")
-            return
-
-        if not clean_dirs_ssh(ssh, include_node):
-            print_error("Directory cleanup failed. Aborting.")
-            return
-
-        print_info("Uploading backup file (depends on internet speed)...")
-        sftp       = ssh.open_sftp()
-        zip_fn     = os.path.basename(zip_path)
-        remote_zip = f"/opt/pasarguard/{zip_fn}"
-        sftp.put(zip_path, remote_zip)
-        sftp.chmod(remote_zip, 0o600)
-        sftp.close()
-        print_success("Upload completed.")
-
-        # v4.2.1 — pre-validate the archive LOCALLY before asking the
-        # remote to extract it. A malicious or tampered backup could carry
-        # entries like `../../etc/cron.d/evil`; refusing up-front (rather
-        # than letting the remote `unzip` write them out as root) keeps
-        # the transfer host safe too. _safe_extract_zip also extracts
-        # safely if we pass `extract=False`, but for the transfer path
-        # we still let the remote do the extraction so any non-/opt/
-        # entries surface there.
-        try:
-            with zipfile.ZipFile(zip_path) as _z:
-                for _member in _z.namelist():
-                    _target = os.path.realpath(os.path.join("/opt/pasarguard", _member))
-                    if not (_target == os.path.realpath("/opt/pasarguard")
-                            or _target.startswith(os.path.realpath("/opt/pasarguard") + os.sep)):
-                        raise ValueError(f"zip-slip entry refused: {_member!r}")
-        except (ValueError, zipfile.BadZipFile) as e:
-            print_error(f"Refusing to extract archive on remote: {e}")
-            return
-
-        execute_ssh_command(ssh, f"cd /opt/pasarguard && unzip -q -o {shlex.quote(zip_fn)}",
-                            "Extracting files")
-
-        try:
-            remote_backend = _detect_backend_ssh(ssh)
-        except Exception as e:
-            print_warning(f"Backend detection failed on remote: {e} — assuming legacy postgres")
-            remote_backend = {"type": "postgresql", "container": None, "dbname": "pasarguard",
-                              "user": "pasarguard", "password": "", "env": {}, "services": [],
-                              "host": "127.0.0.1", "port": 5432, "sqlite_path": None}
-        print_info(
-            f"Detected remote backend: {C.BOLD}{remote_backend['type']}{C.RESET}  "
-            f"db={remote_backend['dbname']}  container={remote_backend['container'] or '(none — sqlite)'}"
-        )
-
-        execute_ssh_command(ssh,
-            "cp -a /opt/pasarguard/pasarguard_data/. /var/lib/pasarguard/ 2>/dev/null || true "
-            "&& rm -rf /opt/pasarguard/pasarguard_data",
-            "Restoring PasarGuard data")
-
-        if include_node:
-            execute_ssh_command(ssh,
-                "cp -a /opt/pasarguard/pg_node_opt/. /opt/pg-node/ 2>/dev/null || true "
-                "&& rm -rf /opt/pasarguard/pg_node_opt",
-                "Restoring PG-Node config")
-            execute_ssh_command(ssh,
-                "cp -a /opt/pasarguard/pg_node_data/. /var/lib/pg-node/ 2>/dev/null || true "
-                "&& rm -rf /opt/pasarguard/pg_node_data",
-                "Restoring PG-Node data")
-
-        if remote_backend["type"] == "sqlite":
-            if not _restore_databases_remote(ssh, "db_dump", None, backend_type="sqlite"):
-                print_error("SQLite restore failed. Aborting.")
-                return
-            if not start_compose_ssh(ssh, PASARGUARD_DIR, "Pasarguard"):
-                print_error("Pasarguard did not start. Aborting.")
-                return
-            if include_node and not start_compose_ssh(ssh, PG_NODE_DIR, "PG-Node"):
-                print_error("PG-Node did not start.")
-            print_header("Transfer & Restore Completed Successfully!")
-            print_success("PasarGuard" + (" and PG-Node are" if include_node else " is") +
-                          " running on the new server.")
-            return
-
-        remote_db_svc = remote_backend["container"]
-        if not remote_db_svc:
-            print_error(f"Could not determine the {remote_backend['type']} container for restore.")
-            return
-
-        # v4.2.3 — wipe MySQL data dir BEFORE starting the container so it
-        # re-inits with the credentials from the new .env. MySQL only reads
-        # MYSQL_ROOT_PASSWORD on first init; stale data on a bind mount
-        # (the typical PasarGuard install) survives `docker compose down -v`
-        # and would silently keep the OLD password, causing 1045 during
-        # restore. This must run after the zip is extracted (so we see the
-        # new docker-compose.yml) and before start_compose_ssh starts MySQL.
-        if remote_backend["type"] in ("mysql", "mariadb"):
-            _wipe_mysql_data_remote(ssh, remote_db_svc)
-
-        # v4.2.2 — pass backend_type so wait_db_* picks the right readiness
-        # probe (pg_isready for postgres/timescaledb, mysqladmin ping for
-        # mysql/mariadb). Previously wait_postgres=True hard-coded pg_isready
-        # which doesn't exist in a mysql image, so the wait always timed out
-        # and the whole transfer aborted with 'mysql did not start'.
-        if not start_compose_ssh(ssh, PASARGUARD_DIR, "Pasarguard DB",
-                                  services=[remote_db_svc], wait_db=True,
-                                  backend_type=remote_backend["type"]):
-            print_error(f"{remote_db_svc} did not start. Aborting.")
-            return
-
-        if not _restore_databases_remote(ssh, "db_dump", remote_db_svc, backend_type=remote_backend["type"]):
-            print_error("Database restore failed. Aborting.")
-            return
-
-        if not start_compose_ssh(ssh, PASARGUARD_DIR, "Pasarguard"):
-            print_error("Pasarguard did not start. Aborting.")
-            return
-        if include_node and not start_compose_ssh(ssh, PG_NODE_DIR, "PG-Node"):
-            print_error("PG-Node did not start.")
-
-        print_header("Transfer & Restore Completed Successfully!")
-        print_success("PasarGuard" + (" and PG-Node are" if include_node else " is") +
-                      " running on the new server.")
-
-    except paramiko.AuthenticationException:
-        print_error("Incorrect server password!")
-    except Exception as e:
-        print_error(f"Connection error: {e}")
-    finally:
-        ssh.close()
-        try:
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
-        except Exception:
-            pass
 
 # ── Workflow 2: Scheduled Telegram backup ────────────────────
 def run_scheduled_backup_loop(bot_token, admin_id, interval_h, include_node, proxy=None, instance=None):
@@ -3228,155 +2430,6 @@ def workflow_manual_backup():
         print_success(f"Backup saved: {zip_path}")
     else:
         print_error("Manual backup failed!")
-
-# ── Workflow 4: Manual local restore ─────────────────────────
-_SAFE_FILENAME_RE = None
-
-def _is_safe_filename(name):
-    """v4.2: validate the user-supplied backup filename before it ever
-    touches a shell=True command. Only allow a plain filename (letters,
-    digits, dot, dash, underscore) with no path separators — blocks both
-    shell metacharacter injection and path traversal (../../etc)."""
-    import re
-    global _SAFE_FILENAME_RE
-    if _SAFE_FILENAME_RE is None:
-        _SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-    return bool(name) and "/" not in name and ".." not in name and bool(_SAFE_FILENAME_RE.match(name))
-
-def workflow_manual_restore():
-    print_header("Manual Restore (Local)")
-
-    include_node = ask_backup_scope()
-    scope_label  = "PasarGuard + PG-Node" if include_node else "PasarGuard only"
-    print_info(f"Scope: {C.BOLD}{scope_label}{C.RESET}")
-
-    zip_name = input(
-        f"  {C.R2}> Backup ZIP filename (e.g. backup_full_20260101.zip): {C.RESET}"
-    ).strip()
-
-    # v4.2 — SECURITY FIX: this filename used to be interpolated directly
-    # into a `shell=True` unzip command with no quoting/validation, which
-    # allowed arbitrary shell command injection (e.g. entering
-    # "x.zip; rm -rf /") to run as root. Validate it strictly before doing
-    # anything else with it.
-    if not _is_safe_filename(zip_name):
-        print_error("Invalid filename — only letters, digits, '.', '-', '_' are allowed "
-                     "(no paths, no shell characters).")
-        return
-
-    zip_name = _join_chunks_if_needed(zip_name)
-    if not zip_name or not _is_safe_filename(zip_name) or not os.path.exists(zip_name):
-        print_error(f"File '{zip_name}' not found in current directory.")
-        return
-
-    # v4.2.4 — same sanity check as the transfer workflow: fail fast on a
-    # backup with no usable manifest, BEFORE stopping containers and
-    # wiping the current install's directories.
-    if not _verify_zip_has_manifest(zip_name):
-        print_error("Aborting — refusing to restore a backup with no usable "
-                     "database manifest. Current install has NOT been touched.")
-        return
-
-    confirm = input(
-        f"  {C.R1}> WARNING: This will overwrite current config and database. Continue? (y/n): {C.RESET}"
-    ).strip().lower()
-    if confirm != "y":
-        print_warning("Aborted.")
-        return
-
-    try:
-        if include_node and not stop_compose_local(PG_NODE_DIR, "PG-Node"):
-            print_error("Could not stop PG-Node. Aborting.")
-            return
-        if not stop_compose_local(PASARGUARD_DIR, "Pasarguard"):
-            print_error("Could not stop Pasarguard. Aborting.")
-            return
-
-        if not clean_dirs_local(include_node):
-            print_error("Directory cleanup failed. Aborting.")
-            return
-
-        print_info("Extracting backup archive...")
-        # v4.2.1 — extract via Python's zipfile module after validating
-        # every member against path-traversal (Zip Slip). A malicious
-        # archive could carry entries like `../../etc/cron.d/evil` that
-        # `unzip -o` would write straight to that path as root.
-        try:
-            _safe_extract_zip(zip_name, "/opt/pasarguard")
-        except (ValueError, zipfile.BadZipFile) as e:
-            print_error(f"Refusing to extract archive: {e}")
-            return
-        except Exception as e:
-            print_error(f"Extraction failed: {e}")
-            return
-
-        print_info("Restoring PasarGuard data...")
-        run_command("cp -a /opt/pasarguard/pasarguard_data/. /var/lib/pasarguard/ 2>/dev/null || true")
-        run_command("rm -rf /opt/pasarguard/pasarguard_data")
-
-        if include_node:
-            print_info("Restoring PG-Node config and data...")
-            run_command("cp -a /opt/pasarguard/pg_node_opt/. /opt/pg-node/ 2>/dev/null || true")
-            run_command("cp -a /opt/pasarguard/pg_node_data/. /var/lib/pg-node/ 2>/dev/null || true")
-            run_command("rm -rf /opt/pasarguard/pg_node_opt /opt/pasarguard/pg_node_data")
-
-        try:
-            backend = _detect_backend_local()
-        except Exception as e:
-            print_warning(f"Backend detection failed: {e} — assuming legacy postgres")
-            backend = {"type": "postgresql", "container": None, "dbname": "pasarguard",
-                       "user": "pasarguard", "password": "", "env": {}, "services": [],
-                       "host": "127.0.0.1", "port": 5432, "sqlite_path": None}
-        print_info(
-            f"Detected backend: {C.BOLD}{backend['type']}{C.RESET}  "
-            f"db={backend['dbname']}  container={backend['container'] or '(none — sqlite)'}"
-        )
-
-        if backend["type"] == "sqlite":
-            if not _restore_databases_local("db_dump", None, backend_type="sqlite"):
-                raise Exception("SQLite restore failed.")
-            if not start_compose_local(PASARGUARD_DIR, "Pasarguard"):
-                raise Exception("Pasarguard did not start")
-            if include_node and not start_compose_local(PG_NODE_DIR, "PG-Node"):
-                print_error("PG-Node did not start.")
-            print_header("Local Restore Completed Successfully!")
-            print_success("PasarGuard" + (" and PG-Node are" if include_node else " is") + " running.")
-            return
-
-        local_db_svc = backend["container"]
-        if not local_db_svc:
-            raise Exception(f"Could not determine the {backend['type']} container for restore.")
-        print_info(f"Detected database service: {local_db_svc}")
-
-        # v4.2.3 — same MySQL data-dir wipe as workflow_transfer (see
-        # _wipe_mysql_data_remote for the full rationale). MySQL only
-        # honours MYSQL_ROOT_PASSWORD on first init, so a stale data dir
-        # on a bind mount would keep the old password and 1045 the restore.
-        if backend["type"] in ("mysql", "mariadb"):
-            _wipe_mysql_data_local(local_db_svc)
-
-        # v4.2.2 — same backend-aware wait fix as workflow_transfer (see
-        # comment there). wait_db_local dispatches by backend_type instead
-        # of unconditionally running pg_isready.
-        if not start_compose_local(PASARGUARD_DIR, "Pasarguard DB",
-                                    services=[local_db_svc], wait_db=True,
-                                    backend_type=backend["type"]):
-            raise Exception(f"{local_db_svc} did not start")
-
-        if not _restore_databases_local("db_dump", local_db_svc, backend_type=backend["type"]):
-            raise Exception("Database restore failed.")
-
-        if not start_compose_local(PASARGUARD_DIR, "Pasarguard"):
-            raise Exception("Pasarguard did not start")
-        if include_node and not start_compose_local(PG_NODE_DIR, "PG-Node"):
-            print_error("PG-Node did not start.")
-
-        print_header("Local Restore Completed Successfully!")
-        print_success("PasarGuard" + (" and PG-Node are" if include_node else " is") + " running.")
-
-    except Exception as e:
-        print_error(f"Restore error: {e}")
-        print_warning("System may be in a partially restored state.")
 
 # ── Workflow 5: Manage running/installed schedulers ───────────
 def _systemctl_action(unit_name, action, quiet=False):
@@ -3649,6 +2702,7 @@ UPDATE_FILES = {
     "pg_backup.py": "/usr/local/bin/idontPG-backup",
     "web_panel.py": "/usr/local/bin/idontPG-backup-web.py",
     "logo.png": "/usr/local/share/idontPG-backup/logo.png",
+    "idont_bot.py": "/usr/local/bin/idontPG-backup-bot.py",
 }
 
 
@@ -3657,7 +2711,7 @@ def _download_update_file(url, dest, timeout=45):
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "idontPG-backup-updater/5.8.1"},
+            headers={"User-Agent": "idontPG-backup-updater/5.8.2"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
@@ -3744,7 +2798,7 @@ def _read_installed_version(path):
 def workflow_update(non_interactive=False):
     print_header("Update idontPG-backup")
     print_info("Source: durwinam/idontPG-backup (main)")
-    print_info("This updates the CLI + Web Panel + Web Panel logo from GitHub.")
+    print_info("This updates the CLI + Web Panel + Telegram Management Bot + Web Panel logo from GitHub.")
     print_info("Your Telegram credentials, scheduler settings and PasarGuard data are not deleted.")
 
     if not non_interactive:
@@ -3764,6 +2818,7 @@ def workflow_update(non_interactive=False):
         #   pg_backup.py
         #   web_panel.py
         #   web/static/logo.png
+        #   idont_bot.py
         #
         # The previous updater incorrectly requested /main/logo.png,
         # which does not exist and caused the entire update to abort.
@@ -3771,6 +2826,7 @@ def workflow_update(non_interactive=False):
             "pg_backup.py": f"{UPDATE_REPO_RAW}/pg_backup.py",
             "web_panel.py": f"{UPDATE_REPO_RAW}/web_panel.py",
             "logo.png": f"{UPDATE_REPO_RAW}/web/static/logo.png",
+            "idont_bot.py": f"{UPDATE_REPO_RAW}/idont_bot.py",
         }
 
         for name, url in update_sources.items():
@@ -3790,6 +2846,8 @@ def workflow_update(non_interactive=False):
             return False
         if not _validate_python_update(downloaded["web_panel.py"], "web_panel.py"):
             return False
+        if not _validate_python_update(downloaded["idont_bot.py"], "idont_bot.py"):
+            return False
 
         new_cli_version = _read_installed_version(downloaded["pg_backup.py"])
         new_web_version = _read_installed_version(downloaded["web_panel.py"])
@@ -3803,7 +2861,7 @@ def workflow_update(non_interactive=False):
                 shutil.copy2(dest, backup)
                 backups[dest] = backup
 
-        # Install CLI first. If a later step fails, restore everything changed.
+        # Install CLI first. If a later step fails, roll back everything changed.
         _atomic_install(downloaded["pg_backup.py"], UPDATE_FILES["pg_backup.py"], 0o700)
         installed.append(UPDATE_FILES["pg_backup.py"])
 
@@ -3814,6 +2872,9 @@ def workflow_update(non_interactive=False):
         _atomic_install(downloaded["logo.png"], UPDATE_FILES["logo.png"], 0o644)
         installed.append(UPDATE_FILES["logo.png"])
 
+        _atomic_install(downloaded["idont_bot.py"], UPDATE_FILES["idont_bot.py"], 0o700)
+        installed.append(UPDATE_FILES["idont_bot.py"])
+
         # Ensure the web services execute the newly installed code immediately.
         web_ok = _restart_service_if_present(
             "idontpg-backup-web.service", "Web Panel"
@@ -3821,14 +2882,19 @@ def workflow_update(non_interactive=False):
         scheduler_ok = _restart_service_if_present(
             "idontpg-backup-web-scheduler.service", "Web Panel Scheduler"
         )
+        bot_ok = _restart_service_if_present(
+            "idontpg-backup-telegram-bot.service", "Telegram Management Bot"
+        )
 
-        if not (web_ok and scheduler_ok):
+        if not (web_ok and scheduler_ok and bot_ok):
             raise RuntimeError("one or more Web Panel services failed to restart")
 
         print()
         print_success("Update completed successfully.")
         print_success(f"Installed CLI: {_read_installed_version(UPDATE_FILES['pg_backup.py'])}")
         print_success(f"Installed Web Panel: {_read_installed_version(UPDATE_FILES['web_panel.py'])}")
+        if os.path.isfile(UPDATE_FILES["idont_bot.py"]):
+            print_success("Installed Telegram Management Bot: v5.8.2")
         print_info("Existing backup credentials and scheduler configuration were preserved.")
         return True
 
@@ -3848,6 +2914,7 @@ def workflow_update(non_interactive=False):
         # Try to bring the old Web Panel back if it was replaced.
         _restart_service_if_present("idontpg-backup-web.service", "Web Panel")
         _restart_service_if_present("idontpg-backup-web-scheduler.service", "Web Panel Scheduler")
+        _restart_service_if_present("idontpg-backup-telegram-bot.service", "Telegram Management Bot")
         return False
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -3903,13 +2970,11 @@ def run_daemon_from_args():
 
 # ── Main menu ─────────────────────────────────────────────────
 MENU = [
-    ("1", "Auto Backup & Transfer to New Server"),
-    ("2", "Auto Backup to Telegram Bot (Scheduled)"),
-    ("3", "Manual Backup (Save locally)"),
-    ("4", "Manual Restore (From local zip)"),
-    ("5", "Manage Backup Schedulers (start/stop/restart)"),
-    ("6", "Update to Latest Version"),
-    ("7", "Open Web Panel"),
+    ("1", "Auto Backup to Telegram Bot (Scheduled)"),
+    ("2", "Manual Backup (Save locally)"),
+    ("3", "Manage Backup Schedulers (start/stop/restart)"),
+    ("4", "Update to Latest Version"),
+    ("5", "Open Web Panel"),
 ]
 
 def main():
@@ -3929,35 +2994,29 @@ def main():
         print(f"  {C.R3}Press Ctrl+C to exit.{C.RESET}")
         print()
 
-        choice = input(f"  {C.R2}> Select option (1-7): {C.RESET}").strip()
+        choice = input(f"  {C.R2}> Select option (1-5): {C.RESET}").strip()
         print()
 
         if choice == "1":
-            workflow_transfer()
-            pause_and_return()
-        elif choice == "2":
             workflow_backup_bot()
             pause_and_return()
-        elif choice == "3":
+        elif choice == "2":
             workflow_manual_backup()
             pause_and_return()
-        elif choice == "4":
-            workflow_manual_restore()
-            pause_and_return()
-        elif choice == "5":
+        elif choice == "3":
             workflow_manage_schedulers()
             pause_and_return()
-        elif choice == "6":
+        elif choice == "4":
             workflow_update()
             pause_and_return()
-        elif choice == "7":
+        elif choice == "5":
             panel_info = _get_web_panel_info()
             print(f"  {C.R2}🌐 Web Panel: {C.RESET}{panel_info['url']}")
             print(f"  {C.R3}Protocol:{C.RESET} {C.WH}HTTP only{C.RESET}")
             print()
             pause_and_return()
         else:
-            print_error("Invalid option. Please enter 1-7.")
+            print_error("Invalid option. Please enter 1-6.")
             time.sleep(1.5)
 
 if __name__ == "__main__":

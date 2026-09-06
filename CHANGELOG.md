@@ -1,3 +1,57 @@
+## v5.9.8
+- Fixed Mini App successful-backup count to use a durable counter instead of the capped recent-history list.
+- Replaced Mini App emoji glyphs with consistent inline SVG icons.
+- Preserved the stable Mini App/Web Panel base and existing 3-recent-backup/resend flow.
+
+## v5.9.7
+- Restored Mini App base to the known-good v5.9.0 implementation.
+- Fixed successful backup count so it stays based on persistent history.
+- Mini App shows the 3 latest backups with resend action.
+
+## v5.9.0
+
+- Added per-Node traffic usage using the same PasarGuard Node counter source already used by the panel, with reset-safe accumulation.
+- Mini App now exposes a live per-Node traffic breakdown and total usage.
+- Node traffic details are cached briefly to keep Mini App loading fast.
+
+# v5.8.9
+
+- Fixed Mini App administrator authorization when Telegram admin IDs exist in the bot configuration.
+- Improved unauthorized Mini App error messaging.
+
+## v5.8.8
+
+### Telegram Bot
+- Added the visible `👤 تغییر اطلاعات` button to the main keyboard.
+- Added account submenu for username, password, and optional 2FA management.
+- Password changes now verify the current password first and invalidate Web Panel sessions.
+
+### Telegram Mini App
+- Rebuilt the Mini App UI with a faster, mobile-first glass interface.
+- Added dedicated Home, Backup, Server, and Account screens.
+- Added staged loading: a lightweight payload is rendered first, then full health/activity data loads in the background.
+- Increased Mini App payload cache duration and reduced unnecessary initial filesystem/API work.
+- Added account/2FA status to the Mini App.
+- Bumped Mini App cache version to `v5.8.8` to prevent stale assets.
+
+## v5.8.7
+
+### Security & Account Management
+- Added optional TOTP two-factor authentication for Web Panel and private Admin Panel login.
+- Added QR-based 2FA setup, manual Secret/otpauth URI fallback, and one-time Recovery Codes.
+- Added 2FA enable/disable controls from the Web Panel and Telegram Bot.
+- Added Telegram Bot account menu for changing the Web Panel username and password.
+- Password changes invalidate other active Web Panel sessions.
+
+### Telegram Mini App
+- Reduced first-load blocking: the splash screen no longer waits for the logo/network extras after API data is ready.
+- Reduced API timeout and refresh frequency while adding a short server-side payload cache.
+- Removed the external Google Fonts dependency from Mini App bootstrap to reduce startup latency.
+
+## v5.8.2
+
+- Version bump for the Telegram Control Center + HTTPS-fixed build.
+
 ## v5.8.1
 
 ### Backup & Web Panel
@@ -61,3 +115,24 @@
 ### Audit Log update
 - Full panel audit trail: login, admin login, backups, Telegram, scheduler, account, delete, logout, language changes.
 - Up to 200 audit events stored separately from the dashboard 3-item activity feed.
+
+## v5.8.1 — Web Panel Access Modes
+- Added Web Panel install mode selection: HTTP via server IP on port 5000, or HTTPS via domain.
+- HTTPS setup validates domain DNS before certificate issuance.
+- Automatically selects a free HTTPS port separate from 5000 (starting at 5443).
+- Automatic Let's Encrypt certificate issuance via Certbot.
+- Automatic daily certificate renewal with Web Panel restart after renewal.
+- UFW-aware firewall opening for HTTP validation and the selected HTTPS port.
+- Web Panel transport configuration is persisted in `/etc/default/idontpg-backup-web`.
+- CLI now reports the configured HTTP/HTTPS Web Panel URL.
+- Restore remains excluded from the user-facing backup workflow.
+
+## v5.8.1 — Telegram Management Bot
+
+- Added optional admin-only Telegram Management Bot.
+- Added Telegram user-ID allowlist enforcement.
+- Added colored Telegram button styles (`primary`, `success`, `danger`) with compatibility fallback.
+- Added Manual Backup from Telegram.
+- Added Latest Backup, Recent Activities, sessions, Auto Delete, Server Status, Notifications and Settings views.
+- Added HTTPS Mini App launcher from the Telegram keyboard.
+- Added updater support for `idont_bot.py` and safe service restart.

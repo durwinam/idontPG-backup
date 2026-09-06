@@ -26,13 +26,17 @@ import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ssl
 from pathlib import Path
 
 APP = "idontPG-backup"
-VERSION = "5.8.1"
+VERSION = "5.9.8"
 ADMIN_PATH = "/control-7Kq9M2xP4/"
 HOST = os.environ.get("IDONTPG_HOST", "0.0.0.0")
 PORT = int(os.environ.get("IDONTPG_PORT", "5000"))
+SCHEME = os.environ.get("IDONTPG_SCHEME", "http").strip().lower()
+SSL_CERTFILE = os.environ.get("IDONTPG_SSL_CERTFILE", "").strip()
+SSL_KEYFILE = os.environ.get("IDONTPG_SSL_KEYFILE", "").strip()
 STATE_DIR = Path(os.environ.get("IDONTPG_STATE_DIR", "/etc/idontPG-backup"))
 CONFIG = STATE_DIR / "web.json"
 SCRIPT = Path(__file__).resolve()
@@ -78,6 +82,11 @@ def _block_session_target(ip, device, username="admin"):
     items.append(entry); _save_blocked_sessions(items)
     for sid,info in list(SESSIONS.items()):
         if info.get("ip")==entry["ip"] or info.get("device")==entry["device"]:
+            SESSIONS.pop(sid,None)
+
+def _invalidate_user_sessions(except_sid=None):
+    for sid in list(SESSIONS):
+        if sid != except_sid:
             SESSIONS.pop(sid,None)
 
 SESSION_TTL = 12 * 60 * 60
@@ -132,7 +141,7 @@ def get_remote_version():
 def load_cfg():
     default = {
         "token": "", "chat": "", "topic": "", "proxy": "",
-        "interval": "24", "node": False, "username": "admin", "password_hash": "", "password_salt": "", "last_login": {"time": 0, "ip": ""}, "telegram_auto_delete": False, "telegram_auto_delete_hours": 0.0, "telegram_delete_jobs": []
+        "interval": "24", "node": False, "username": "admin", "password_hash": "", "password_salt": "", "last_login": {"time": 0, "ip": ""}, "telegram_auto_delete": False, "telegram_auto_delete_hours": 0.0, "telegram_delete_jobs": [], "telegram_admin_ids": [], "ssl_warning_last": "", "ssl_monitor_last_check": 0, "two_factor_enabled": False, "two_factor_secret": "", "two_factor_pending_secret": "", "two_factor_pending_created": 0, "two_factor_recovery_codes": []
     }
     if not CONFIG.exists():
         return default
@@ -160,6 +169,39 @@ def valid_password(value):
             bool(re.search(r"[0-9]", value)) and
             bool(re.search(r"[^A-Za-z0-9]", value)))
 
+
+def _totp_code(secret, for_time=None):
+    import struct
+    try:
+        clean=str(secret or "").replace(" ","").upper()
+        raw=base64.b32decode(clean + "="*((8-len(clean)%8)%8),casefold=True)
+        counter=int((time.time() if for_time is None else for_time)//30)
+        digest=hmac.new(raw,struct.pack(">Q",counter),hashlib.sha1).digest()
+        off=digest[-1]&15
+        return f"{((int.from_bytes(digest[off:off+4],'big')&0x7fffffff)%1000000):06d}"
+    except Exception: return ""
+
+def _totp_valid(secret, code, window=1):
+    code=str(code or "").strip().replace(" ","")
+    if not re.fullmatch(r"\d{6}",code) or not secret: return False
+    now=time.time()
+    return any(hmac.compare_digest(_totp_code(secret,now+i*30),code) for i in range(-window,window+1))
+
+def _new_totp_secret(): return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+def _recovery_codes(count=8): return [secrets.token_hex(4).upper() for _ in range(count)]
+
+def _consume_recovery_code(c, code):
+    code=str(code or "").strip().upper().replace("-","")
+    for saved in list(c.get("two_factor_recovery_codes") or []):
+        if hmac.compare_digest(str(saved).replace("-","").upper(),code):
+            c["two_factor_recovery_codes"]=[x for x in c.get("two_factor_recovery_codes",[]) if str(x)!=str(saved)]
+            return True
+    return False
+
+def _totp_uri(c, secret):
+    issuer=APP; label=f"{issuer}:{canonical_username(c.get('username','admin'))}"
+    return "otpauth://totp/"+urllib.parse.quote(label,safe="")+"?secret="+urllib.parse.quote(secret)+"&issuer="+urllib.parse.quote(issuer)+"&algorithm=SHA1&digits=6&period=30"
 
 def save_cfg(c):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -333,6 +375,7 @@ def make_backup(send=True, audit_context=None):
             if hasattr(core, "_verify_zip_has_manifest") and not core._verify_zip_has_manifest(archive):
                 raise RuntimeError("Backup archive failed the native manifest/integrity check.")
             _record_backup_created(archive)
+            _increment_successful_backup_count()
         if not send:
             _record_activity("Backup created successfully", "ok", au, ai, ad, "backup_created")
             return True, f"Backup ساخته شد: {archive}"
@@ -530,6 +573,48 @@ BACKUP_HISTORY_FILES = (
     STATE_DIR / "backup_history.json",
     Path("/var/lib/idontPG-backup/backup_history.json"),
 )
+SUCCESSFUL_BACKUP_COUNT_FILE = STATE_DIR / "successful_backup_count.json"
+
+def _successful_backup_count():
+    """Return the durable number of successfully created Backup archives.
+
+    This counter is intentionally separate from the rolling recent-backup
+    history (which is capped for disk usage). Once created, a successful
+    Backup remains counted even after its ZIP is removed from disk.
+    """
+    try:
+        if SUCCESSFUL_BACKUP_COUNT_FILE.is_file():
+            raw=json.loads(SUCCESSFUL_BACKUP_COUNT_FILE.read_text(encoding="utf-8"))
+            value=int(raw.get("count",0)) if isinstance(raw,dict) else int(raw)
+            return max(0,value)
+    except Exception:
+        pass
+    # Safe one-time migration: count the durable records we can prove exist.
+    # Future backups are then tracked without relying on the rolling history.
+    try:
+        known=len(_load_backup_history())
+    except Exception:
+        known=0
+    try:
+        SUCCESSFUL_BACKUP_COUNT_FILE.parent.mkdir(parents=True,exist_ok=True)
+        SUCCESSFUL_BACKUP_COUNT_FILE.write_text(json.dumps({"count":known},ensure_ascii=False),encoding="utf-8")
+        SUCCESSFUL_BACKUP_COUNT_FILE.chmod(0o600)
+    except Exception:
+        pass
+    return max(0,known)
+
+def _increment_successful_backup_count():
+    try:
+        value=_successful_backup_count()+1
+        SUCCESSFUL_BACKUP_COUNT_FILE.parent.mkdir(parents=True,exist_ok=True)
+        tmp=SUCCESSFUL_BACKUP_COUNT_FILE.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps({"count":value},ensure_ascii=False),encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.replace(SUCCESSFUL_BACKUP_COUNT_FILE)
+        return value
+    except Exception:
+        return _successful_backup_count()
+
 
 def _record_audit(message, kind="ok", username="system", ip="unknown", device="Unknown", event="activity"):
     """Persist a private rolling audit trail for this panel installation."""
@@ -939,7 +1024,7 @@ def _sum_all_panel_users(token):
 # Traffic is read from the registered PasarGuard Nodes themselves.  The panel
 # API is used only to discover node address/port/API key/CA.
 NODE_TRAFFIC_FILE = STATE_DIR / "node_traffic.json"
-_NODE_TRAFFIC_CACHE = {"ts": 0.0, "value": None}
+_NODE_TRAFFIC_CACHE = {"ts": 0.0, "value": None, "details": None}
 _NODE_TRAFFIC_LOCK = __import__("threading").Lock()
 _NODE_TRAFFIC_LAST_ERROR = ""
 
@@ -1278,62 +1363,81 @@ def _save_node_traffic_state(state):
         pass
 
 
-def get_panel_storage_usage():
-    """Return cumulative traffic collected directly from connected Nodes."""
+def get_node_traffic_details(force=False):
+    """Return cumulative traffic per PasarGuard Node.
+
+    The counter source is the Node itself (UsersStat/GetStats), while the
+    accumulator survives Xray/Node counter resets.  This keeps the displayed
+    usage stable and gives the UI a real per-node breakdown instead of a
+    guessed value derived from disk usage.
+    """
     global _NODE_TRAFFIC_LAST_ERROR
     now = time.time()
     with _NODE_TRAFFIC_LOCK:
-        if _NODE_TRAFFIC_CACHE.get("value") is not None and now - _NODE_TRAFFIC_CACHE.get("ts", 0) < 15:
-            return _format_bytes(_NODE_TRAFFIC_CACHE["value"])
+        if (not force and _NODE_TRAFFIC_CACHE.get("details") is not None
+                and now - _NODE_TRAFFIC_CACHE.get("ts", 0) < 15):
+            return json.loads(json.dumps(_NODE_TRAFFIC_CACHE["details"], ensure_ascii=False))
         try:
             token = _pg_api_token()
             if not token:
                 _NODE_TRAFFIC_LAST_ERROR = "PasarGuard sudo credentials not found"
-                return "قابل دریافت نیست"
+                return []
             nodes = _discover_pg_nodes(token)
             if not nodes:
                 _NODE_TRAFFIC_LAST_ERROR = "PasarGuard returned no nodes"
-                return "قابل دریافت نیست"
+                return []
 
             state = _load_node_traffic_state()
             state_nodes = state.setdefault("nodes", {})
-            successful = 0
+            details = []
             errors = []
 
             for node in nodes:
                 status = str(node.get("status") or "").lower()
                 if status in ("disabled", "deleted", "offline", "disconnected"):
                     continue
-                key = str(node.get("id") or node.get("name") or _node_address(node) or "")
+                node_id = str(node.get("id") or "").strip()
+                name = str(node.get("name") or node_id or _node_address(node) or "Node").strip()
+                key = node_id or name or _node_address(node)
                 if not key:
                     continue
                 try:
-                    raw = int(_node_stats_raw(node))
-                    successful += 1
+                    raw = max(0, int(_node_stats_raw(node)))
                 except Exception as exc:
-                    errors.append(f"{key}: {exc}")
+                    errors.append(f"{name}: {exc}")
+                    previous = state_nodes.get(key, {}) if isinstance(state_nodes.get(key), dict) else {}
+                    details.append({"id": key, "name": name, "traffic": max(0, int(previous.get("total") or 0)), "status": "error"})
                     continue
 
                 previous = state_nodes.get(key, {}) if isinstance(state_nodes.get(key), dict) else {}
-                last_raw = int(previous.get("raw") or 0)
-                accumulated = int(previous.get("total") or 0)
+                last_raw = max(0, int(previous.get("raw") or 0))
+                accumulated = max(0, int(previous.get("total") or 0))
+                # PasarGuard Node counters can reset after service/core resets.
                 delta = raw - last_raw if raw >= last_raw else raw
                 accumulated += max(0, delta)
-                state_nodes[key] = {"raw": raw, "total": accumulated, "updated": now}
+                state_nodes[key] = {"raw": raw, "total": accumulated, "updated": now, "name": name}
+                details.append({"id": key, "name": name, "traffic": accumulated, "status": "ok"})
 
-            if successful == 0:
-                _NODE_TRAFFIC_LAST_ERROR = " | ".join(errors)[-1800:] or "all nodes failed"
-                return "قابل دریافت نیست"
-
-            total = sum(max(0, int(v.get("total") or 0)) for v in state_nodes.values() if isinstance(v, dict))
             state["updated"] = now
             _save_node_traffic_state(state)
-            _NODE_TRAFFIC_LAST_ERROR = ""
-            _NODE_TRAFFIC_CACHE.update({"ts": now, "value": total})
-            return _format_bytes(total)
+            if not details or all(item.get("status") == "error" for item in details):
+                _NODE_TRAFFIC_LAST_ERROR = " | ".join(errors)[-1800:] or "all nodes failed"
+            else:
+                _NODE_TRAFFIC_LAST_ERROR = " | ".join(errors)[-1800:] if errors else ""
+            details.sort(key=lambda item: item.get("traffic", 0), reverse=True)
+            total = sum(max(0, int(item.get("traffic") or 0)) for item in details)
+            _NODE_TRAFFIC_CACHE.update({"ts": now, "value": total, "details": details})
+            return json.loads(json.dumps(details, ensure_ascii=False))
         except Exception as exc:
             _NODE_TRAFFIC_LAST_ERROR = str(exc)[-1800:]
-            return "قابل دریافت نیست"
+            return []
+
+
+def get_panel_storage_usage():
+    """Return cumulative traffic collected directly from connected Nodes."""
+    details = get_node_traffic_details()
+    total = sum(max(0, int(item.get("traffic") or 0)) for item in details)
+    return _format_bytes(total) if details else "قابل دریافت نیست"
 
 def get_disk_info():
     try:
@@ -2300,6 +2404,230 @@ def idont_apply_ui_settings(form):
     return s
 
 
+
+def _telegram_webapp_auth(init_data):
+    # Validate Telegram Mini App initData using the configured Bot Token.
+    init_data = str(init_data or "").strip()
+    if not init_data:
+        return None, "Telegram initData is missing."
+    cfg = load_cfg()
+    token = str(cfg.get("token") or "").strip()
+    if not token:
+        return None, "Telegram Bot Token is not configured."
+    try:
+        fields = urllib.parse.parse_qs(init_data, keep_blank_values=True)
+        supplied = fields.get("hash", [""])[0]
+        if not supplied or not re.fullmatch(r"[0-9a-fA-F]{64}", supplied):
+            return None, "Invalid Telegram initData hash."
+        pairs=[]
+        for key in sorted(fields):
+            if key == "hash":
+                continue
+            pairs.append(f"{key}={fields[key][0]}")
+        check_string="\n".join(pairs)
+        secret = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+        expected = hmac.new(secret, check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected.lower(), supplied.lower()):
+            return None, "Telegram authentication failed."
+        auth_date = int(fields.get("auth_date", ["0"])[0] or 0)
+        if auth_date <= 0 or time.time() - auth_date > 86400:
+            return None, "Telegram session expired. Please reopen the Mini App."
+        user={}
+        raw_user=fields.get("user", [""])[0]
+        if raw_user:
+            try:
+                user=json.loads(raw_user)
+            except Exception:
+                user={}
+        return {"user": user, "auth_date": auth_date}, "OK"
+    except Exception:
+        return None, "Invalid Telegram authentication data."
+
+
+def _mini_launch_auth(token):
+    """Validate a short-lived launch token issued by the Telegram bot."""
+    token = str(token or "").strip()
+    if not token:
+        return None
+    try:
+        p = STATE_DIR / "miniapp_launch_tokens.json"
+        data = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+        item = data.get(token) if isinstance(data, dict) else None
+        if not isinstance(item, dict):
+            return None
+        if float(item.get("expires", 0)) < time.time():
+            data.pop(token, None)
+            try: p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception: pass
+            return None
+        uid = int(item.get("uid", 0))
+        if uid <= 0:
+            return None
+        return {"user": {"id": uid, "first_name": "Telegram Admin"}, "auth_date": int(time.time())}
+    except Exception:
+        return None
+
+
+def _miniapp_request_auth(handler):
+    init_data = handler.headers.get("X-Telegram-Init-Data", "")
+    auth, msg = _telegram_webapp_auth(init_data)
+    if not auth:
+        token = handler.headers.get("X-MiniApp-Launch-Token", "")
+        if not token:
+            try: token=urllib.parse.parse_qs(urllib.parse.urlparse(handler.path).query).get("launch_token", [""])[0]
+            except Exception: token=""
+        auth=_mini_launch_auth(token)
+        if not auth: return None, msg
+    user=auth.get("user") or {}
+    try: uid=int(user.get("id") or 0)
+    except Exception: uid=0
+    # Build the Mini App allowlist from both Web Panel settings and the
+    # Telegram bot configuration. Older installations may have their admin
+    # IDs only in telegram_bot.json; requiring the Web Panel copy caused a
+    # valid Telegram administrator to be rejected with a false 403/401.
+    allowed=set()
+    cfg=load_cfg()
+    for value in (cfg.get("telegram_admin_ids") or []):
+        try: allowed.add(int(str(value).strip()))
+        except Exception: pass
+    try:
+        bot_cfg_path=STATE_DIR / "telegram_bot.json"
+        if bot_cfg_path.is_file():
+            bot_cfg=json.loads(bot_cfg_path.read_text(encoding="utf-8"))
+            for value in (bot_cfg.get("admin_ids") or []):
+                try: allowed.add(int(str(value).strip()))
+                except Exception: pass
+    except Exception:
+        pass
+    # The short-lived launch token is issued only after the bot has already
+    # authenticated the Telegram user against its admin allowlist. Keep the
+    # allowlist check here as defense-in-depth, but accept the token's UID when
+    # it is present in either synchronized configuration source.
+    if uid<=0 or uid not in allowed:
+        return None, "⛔ این Telegram ID در لیست مدیران مجاز نیست. از تنظیمات Telegram، Admin ID خود را اضافه کنید و Mini App را دوباره باز کنید."
+    return auth, "OK"
+
+
+def _issue_mini_download_token(path, uid):
+    try:
+        path = Path(path).resolve()
+        if not path.is_file():
+            return ""
+        now = time.time()
+        for key, item in list(_MINI_DOWNLOAD_TOKENS.items()):
+            if float(item.get("expires", 0)) < now:
+                _MINI_DOWNLOAD_TOKENS.pop(key, None)
+        token = secrets.token_urlsafe(32)
+        _MINI_DOWNLOAD_TOKENS[token] = {"path": str(path), "uid": int(uid), "expires": now + 180}
+        return token
+    except Exception:
+        return ""
+
+def _consume_mini_download_token(token, uid):
+    item = _MINI_DOWNLOAD_TOKENS.pop(str(token or ""), None)
+    if not item or float(item.get("expires", 0)) < time.time():
+        return None
+    try:
+        if int(item.get("uid", 0)) != int(uid):
+            return None
+    except Exception:
+        return None
+    path = Path(str(item.get("path", ""))).resolve()
+    if not path.is_file() or path.suffix.lower() != ".zip":
+        return None
+    return path
+
+
+_MINI_PAYLOAD_CACHE={"ts":0,"key":None,"payload":None}
+def _miniapp_payload(user_id=None, fast=False):
+    global _MINI_PAYLOAD_CACHE
+    key=(int(user_id or 0), bool(fast)); now=time.time()
+    ttl=8 if fast else 4
+    if _MINI_PAYLOAD_CACHE.get("payload") is not None and _MINI_PAYLOAD_CACHE.get("key")==key and now-float(_MINI_PAYLOAD_CACHE.get("ts",0))<ttl:
+        return json.loads(json.dumps(_MINI_PAYLOAD_CACHE["payload"],ensure_ascii=False))
+    c=load_cfg(); history=_load_backup_history();
+    info={"count":len(history),"latest":"—","latest_time":"—","size":"0 B"}
+    if history:
+        latest=max(history,key=lambda x: float(x.get("mtime") or 0)); info.update({"latest":latest.get("name") or "—","latest_time":time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(latest.get("mtime") or 0))),"size":_format_bytes(sum(int(x.get("size") or 0) for x in history))})
+    # Mini App successful count is based only on the persistent backup history.
+    # Do not replace it with get_backup_info() on the slower refresh: that used
+    # to make the number jump after the initial fast payload.
+    disk={} if fast else {item.name:(item,size,mtime) for item,size,mtime in _backup_archives()}
+    merged=[]; seen=set()
+    for item in sorted(history, key=lambda x: float(x.get("mtime") or 0), reverse=True):
+        name=str(item.get("name") or "")
+        if not name or name in seen: continue
+        size=int(item.get("size") or 0); mtime=float(item.get("mtime") or 0)
+        if name in disk: _,size,mtime=disk[name]
+        merged.append((name,max(0,size),mtime,name in disk)); seen.add(name)
+    if not fast:
+        for item,size,mtime in _backup_archives():
+            if item.name not in seen: merged.append((item.name,size,mtime,True)); seen.add(item.name)
+    merged.sort(key=lambda x:x[2], reverse=True); recent=[]
+    for name,size,mtime,on_disk in merged[:3]:
+        row={"name":name,"size":_format_bytes(size),"mtime":mtime,"time":time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(mtime)),"downloadable":bool(on_disk)}
+        if on_disk and user_id:
+            tok=_issue_mini_download_token(disk[name][0],user_id)
+            if tok: row["download_url"]="/miniapp-download?token="+urllib.parse.quote(tok,safe="")
+        recent.append(row)
+    latest=recent[0] if recent else None
+    resources=get_server_resource_usage()
+    panel=get_panel_info() if not fast else {"status":"Loading"}
+    scheduler=scheduler_status() if not fast else "loading"
+    health=[{"name":n,"ok":bool(ok),"detail":d} for n,ok,d in get_health_info(c,panel)] if not fast else []
+    node_traffic=get_node_traffic_details() if not fast else []
+    payload={"app":APP,"version":VERSION,"developer":"durwinam","github":"https://github.com/durwinam/idontPG-backup","backup":{"successful":_successful_backup_count(),"latest":info.get("latest","—"),"latest_time":info.get("latest_time","—"),"total_size":info.get("size","0 B"),"latest_download_url":(latest or {}).get("download_url",""),"recent":recent},"server":{"cpu":resources.get("cpu",0),"ram":resources.get("ram",0),"disk":resources.get("disk",0),"panel_status":panel.get("status","Unknown"),"scheduler":scheduler,"telegram":bool(c.get("token") and c.get("chat"))},"settings":{"interval":str(c.get("interval","24")),"node":bool(c.get("node")),"telegram":bool(c.get("token") and c.get("chat"))},"account":{"username":canonical_username(c.get("username","admin")),"two_factor_enabled":bool(c.get("two_factor_enabled")),"recovery_codes":len(c.get("two_factor_recovery_codes") or [])},"nodes":{"total":sum(max(0,int(x.get("traffic") or 0)) for x in node_traffic),"items":node_traffic,"error":_NODE_TRAFFIC_LAST_ERROR},"activity":get_recent_activities() if not fast else [],"health":health}
+    _MINI_PAYLOAD_CACHE={"ts":now,"key":key,"payload":payload}
+    return json.loads(json.dumps(payload,ensure_ascii=False))
+
+
+def _miniapp_shared_css():
+    """Serve shared Web Panel design tokens to the Mini App."""
+    selectors = [":root", "body.light", ".theme-violet", ".theme-emerald", ".theme-ocean"]
+    out = []
+    for selector in selectors:
+        m = re.search(re.escape(selector) + r"\{([^}]*)\}", CSS)
+        if not m: continue
+        props=[]
+        for decl in m.group(1).split(";"):
+            if ":" not in decl: continue
+            k,v=decl.split(":",1)
+            if k.strip().startswith("--"): props.append(k.strip()+":"+v.strip())
+        if props: out.append(selector+"{"+";".join(props)+"}")
+    out.append("html,body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}")
+    return "\n".join(out)
+
+def miniapp_page():
+    return r'''<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"><meta name="theme-color" content="#07080d"><meta name="color-scheme" content="dark light"><title>idontPG-backup · Mini App</title>
+<script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+<style>
+:root{--bg:#07080d;--card:rgba(17,21,33,.78);--card2:rgba(255,255,255,.045);--line:rgba(255,255,255,.10);--text:#f7f8fc;--muted:#9299aa;--a:#31c8ff;--b:#8b5cf6;--ok:#38df9a;--bad:#ff5f7d;--shadow:0 24px 70px rgba(0,0,0,.34)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif}body{overflow-x:hidden}.ambient{position:fixed;inset:0;pointer-events:none;overflow:hidden;background:radial-gradient(600px 420px at 10% 0%,rgba(49,200,255,.11),transparent 60%),radial-gradient(620px 460px at 100% 65%,rgba(139,92,246,.13),transparent 62%)}.ambient:after{content:"";position:absolute;width:240px;height:240px;right:15%;top:36%;border-radius:50%;background:rgba(49,200,255,.055);filter:blur(65px)}
+.app{position:relative;z-index:1;max-width:760px;margin:auto;padding:16px 14px calc(96px + env(safe-area-inset-bottom))}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 14px}.brand{display:flex;align-items:center;gap:11px;min-width:0}.logo{width:50px;height:50px;object-fit:contain;border-radius:17px;border:1px solid var(--line);background:var(--card2);box-shadow:0 8px 30px rgba(49,200,255,.08)}.brand h1{font-size:18px;line-height:1.1;margin:0;font-weight:950}.brand p{font-size:10px;color:var(--muted);margin:5px 0 0}.version{padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:var(--card2);font-size:10px;color:var(--muted);white-space:nowrap}.screen{display:none}.screen.active{display:block;animation:in .18s ease}@keyframes in{from{opacity:.15;transform:translateY(5px)}to{opacity:1;transform:none}}
+.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:30px;padding:21px;background:linear-gradient(135deg,rgba(49,200,255,.09),rgba(139,92,246,.08) 58%,var(--card));box-shadow:var(--shadow)}.hero:after{content:"";position:absolute;width:180px;height:180px;left:-70px;top:-85px;border-radius:50%;border:1px solid rgba(49,200,255,.18);box-shadow:0 0 80px rgba(49,200,255,.08)}.kicker{font-size:9px;letter-spacing:2px;color:var(--a);font-weight:950}.hero h2{font-size:31px;margin:8px 0 6px;line-height:1.12}.hero p{font-size:11px;color:var(--muted);margin:0;line-height:1.8}.main-stat{margin-top:17px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px}.stat-label{font-size:10px;color:var(--muted)}.stat-value{font-size:44px;line-height:1;font-weight:950;margin-top:4px}.latest{font-size:9px;color:var(--muted);text-align:left;max-width:190px;line-height:1.7}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.tile{border:1px solid var(--line);border-radius:23px;padding:16px;min-height:105px;background:var(--card);color:var(--text);box-shadow:0 15px 45px rgba(0,0,0,.18);text-align:right}.tile:active{transform:scale(.985)}button.tile{font:inherit}.ico{width:40px;height:40px;display:grid;place-items:center;border-radius:14px;margin-bottom:13px}.svgico{width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.blue .ico{background:rgba(49,200,255,.12);color:var(--a)}.green .ico{background:rgba(56,223,154,.12);color:var(--ok)}.purple .ico{background:rgba(139,92,246,.13);color:#b89cff}.red .ico{background:rgba(255,95,125,.11);color:var(--bad)}.tile b{font-size:13px}.tile small{display:block;color:var(--muted);font-size:9px;margin-top:4px}
+.section{margin-top:10px;border:1px solid var(--line);border-radius:23px;padding:15px;background:var(--card);box-shadow:0 15px 45px rgba(0,0,0,.16)}.head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px}.head b{font-size:13px}.muted{color:var(--muted);font-size:10px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row strong{display:block;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row small{display:block;color:var(--muted);font-size:9px;margin-top:3px}.pill{font-size:9px;font-weight:900;padding:7px 9px;border-radius:999px;background:rgba(56,223,154,.1);color:var(--ok);border:1px solid rgba(56,223,154,.18)}.pill.bad{background:rgba(255,95,125,.09);color:var(--bad);border-color:rgba(255,95,125,.18)}.download{border:1px solid rgba(49,200,255,.22);background:rgba(49,200,255,.08);color:var(--a);padding:8px 10px;border-radius:12px;text-decoration:none;font-size:9px;font-weight:900;white-space:nowrap}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{padding:12px;border:1px solid var(--line);border-radius:17px;background:var(--card2)}.metric small{font-size:9px;color:var(--muted)}.metric b{display:block;font-size:17px;margin-top:4px}.meter{height:4px;border-radius:9px;background:rgba(127,127,127,.13);overflow:hidden;margin-top:8px}.meter span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--a),var(--b));transition:width .35s ease}.account-card{display:flex;align-items:center;gap:13px}.account-icon{width:48px;height:48px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(49,200,255,.13),rgba(139,92,246,.16))}.account-card b{font-size:14px}.account-card small{display:block;color:var(--muted);font-size:9px;margin-top:4px}.bottom{position:fixed;z-index:30;left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));max-width:740px;margin:auto;padding:7px;border:1px solid var(--line);border-radius:24px;background:rgba(12,15,23,.91);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:grid;grid-template-columns:repeat(4,1fr);box-shadow:0 18px 60px rgba(0,0,0,.42)}.nav{border:0;background:transparent;color:#777f91;border-radius:18px;min-height:57px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:9px;font-weight:900}.nav.active{color:var(--a);background:rgba(49,200,255,.09)}.nav span:first-child{line-height:1}.nav .navico{width:19px;height:19px;display:block;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.splash{position:fixed;z-index:100;inset:0;background:#07080d;display:grid;place-items:center;padding:24px;transition:opacity .25s,visibility .25s}.splash.hide{opacity:0;visibility:hidden;pointer-events:none}.loader{text-align:center;width:min(330px,90vw)}.mark{width:92px;height:92px;margin:auto;border-radius:28px;display:grid;place-items:center;background:rgba(49,200,255,.045);border:1px solid rgba(49,200,255,.2);position:relative;box-shadow:0 0 60px rgba(49,200,255,.09)}.mark:before{content:"";position:absolute;inset:-9px;border-radius:50%;border:2px solid transparent;border-top-color:var(--a);border-right-color:var(--b);animation:spin .9s linear infinite}.mark img{width:64px;height:64px;object-fit:contain;border-radius:20px}.loader h2{font-size:17px;margin:24px 0 7px}.loader p{font-size:10px;color:var(--muted);margin:0}.load-error{margin-top:15px;padding:12px;border-radius:15px;border:1px solid rgba(255,95,125,.3);background:rgba(255,95,125,.07);color:#ffdce4;font-size:10px;line-height:1.8}.load-error button{margin-top:9px;width:100%;padding:10px;border:0;border-radius:12px;background:rgba(255,255,255,.12);color:white;font-weight:800}@media(max-width:390px){.hero h2{font-size:27px}.stat-value{font-size:38px}.tile{min-height:98px;padding:14px}}
+</style></head><body>
+<div class="splash" id="splash"><div class="loader"><div class="mark"><img src="/static/logo.png" alt="idontPG"></div><h2 id="loadText">در حال اتصال سریع…</h2><p>در حال دریافت اطلاعات اصلی</p><div id="loadError" class="load-error" hidden></div></div></div>
+<div class="ambient"></div><main class="app"><header class="top"><div class="brand"><img class="logo" src="/static/logo.png" alt="idontPG"><div><h1>idontPG-backup</h1><p>Backup Control Center · durwinam</p></div></div><div class="version" id="version">v5.9.8</div></header>
+<section class="screen active" data-screen="home"><div class="hero"><div class="kicker">SECURE BACKUP CENTER</div><h2>کنترل سریع Backup</h2><p id="hello">مدیریت سریع سرور از داخل Telegram</p><div class="main-stat"><div><div class="stat-label">Backupهای موفق</div><div class="stat-value" id="successCount">—</div></div><div class="latest" id="latest">آخرین Backup: —</div></div></div><div class="grid"><button class="tile blue" id="manual"><span class="ico"><svg class="svgico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><b>بکاپ دستی</b><small>ساخت و ارسال طبق تنظیمات</small></button><button class="tile purple" id="refresh"><span class="ico"><svg class="svgico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5"/><path d="M20 4v7h-7"/></svg></span><b>به‌روزرسانی</b><small>دریافت آخرین اطلاعات</small></button><button class="tile green" data-go="backups"><span class="ico"><svg class="svgico" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h8v8H8z"/></svg></span><b>Backupها</b><small>آخرین فایل‌ها و دانلود</small></button><button class="tile red" data-go="server"><span class="ico"><svg class="svgico" viewBox="0 0 24 24"><path d="M4 15c2-6 4-6 6 0s4 6 6 0 3-5 4-3"/></svg></span><b>وضعیت سرور</b><small>منابع و سرویس‌ها</small></button></div><div class="section"><div class="head"><b>آخرین فعالیت‌ها</b><span class="muted" id="updated">—</span></div><div id="activityList"><div class="muted">در حال دریافت…</div></div></div></section>
+<section class="screen" data-screen="backups"><div class="hero"><div class="kicker">BACKUP ARCHIVE</div><h2>Backupها</h2><p>آخرین Backupهای موجود روی سرور</p></div><div class="section"><div id="backupList"><div class="muted">در حال دریافت…</div></div></div></section>
+<section class="screen" data-screen="server"><div class="hero"><div class="kicker">SERVER HEALTH</div><h2>وضعیت سرور</h2><p>نمایش سریع منابع و سرویس‌های اصلی</p></div><div class="section"><div class="metrics"><div class="metric"><small>CPU</small><b id="cpu">—</b><div class="meter"><span id="cpuBar"></span></div></div><div class="metric"><small>RAM</small><b id="ram">—</b><div class="meter"><span id="ramBar"></span></div></div><div class="metric"><small>Disk</small><b id="disk">—</b><div class="meter"><span id="diskBar"></span></div></div></div><div id="services" style="margin-top:10px"><div class="muted">در حال دریافت…</div></div></div><div class="section"><div class="head"><b>📡 مصرف Nodeها</b><span class="muted" id="nodeTrafficTotal">—</span></div><div id="nodeTrafficList"><div class="muted">در حال دریافت…</div></div></div><div class="section"><div class="head"><b>تنظیمات سریع</b><span class="muted">بدون Restart</span></div><div class="row"><div><strong>Scheduler</strong><small id="schedulerState">—</small></div><button class="download" id="changeScheduler">تغییر</button></div><div class="row"><div><strong>PG-Node</strong><small id="nodeState">—</small></div><button class="download" id="toggleNode">تغییر</button></div></div></section>
+<section class="screen" data-screen="account"><div class="hero"><div class="kicker">ACCOUNT SECURITY</div><h2>حساب و امنیت</h2><p>وضعیت حساب Web Panel و احراز هویت دو مرحله‌ای</p></div><div class="section"><div class="account-card"><div class="account-icon"><svg class="svgico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c.7-3.5 3.1-5.4 7-5.4s6.3 1.9 7 5.4"/></svg></div><div><b id="accountUser">—</b><small>نام کاربری Web Panel</small></div></div><div class="row"><div><strong><svg class="svgico" style="display:inline-block;vertical-align:-5px;margin-left:4px" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.7-2.8 8.1-7 10-4.2-1.9-7-5.3-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg> تأیید دو مرحله‌ای</strong><small>ورود امن به Web Panel و Admin Panel</small></div><span class="pill" id="twofa">—</span></div><div class="row"><div><strong><svg class="svgico" style="display:inline-block;vertical-align:-5px;margin-left:4px" viewBox="0 0 24 24"><circle cx="8" cy="12" r="3"/><path d="M11 12h9M17 12v3M20 12v2"/></svg> Recovery Code</strong><small>کدهای بازیابی باقی‌مانده</small></div><span class="pill" id="recovery">—</span></div></div><div class="section"><div class="muted">تغییر Username، Password و مدیریت 2FA از منوی «تغییر اطلاعات» داخل ربات انجام می‌شود.</div></div></section>
+</main><nav class="bottom"><button class="nav active" data-go="home"><span>⌂</span>خانه</button><button class="nav" data-go="backups"><span>▣</span>Backup</button><button class="nav" data-go="server"><span>⌁</span>سرور</button><button class="nav" data-go="account"><span>👤</span>حساب</button></nav>
+<script defer>(function(){
+const tg=window.Telegram&&window.Telegram.WebApp,splash=document.getElementById('splash'),loadText=document.getElementById('loadText'),loadError=document.getElementById('loadError');
+try{if(tg){tg.ready();tg.expand();}}catch(e){}
+let current='home';function show(name){current=name;document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.dataset.screen===name));document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.go===name));window.scrollTo(0,0)}document.querySelectorAll('[data-go]').forEach(x=>x.addEventListener('click',()=>show(x.dataset.go)));
+function headers(){const h={'X-Telegram-Init-Data':tg?tg.initData:''};const token=new URLSearchParams(location.search).get('launch_token');if(token)h['X-MiniApp-Launch-Token']=token;return h}
+async function api(path,opts={}){const h=headers();if(opts.headers)Object.assign(h,opts.headers);const c=new AbortController(),t=setTimeout(()=>c.abort(),5000);try{const r=await fetch(path,Object.assign({headers:h,cache:'no-store',signal:c.signal},opts)),j=await r.json().catch(()=>({}));if(!r.ok||j.error)throw new Error(j.error||'Request failed');return j}catch(e){if(e.name==='AbortError')throw new Error('اتصال به سرور بیش از حد طول کشید.');throw e}finally{clearTimeout(t)}}
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function pct(v){return Math.max(0,Math.min(100,Number(v)||0))}function fmtBytes(v){v=Math.max(0,Number(v)||0);const u=['B','KB','MB','GB','TB'];let i=0;while(v>=1024&&i<u.length-1){v/=1024;i++}return (i===0?v.toFixed(0):v.toFixed(1))+' '+u[i]}function metric(id,v){const n=pct(v),e=document.getElementById(id);if(e)e.textContent=n.toFixed(1)+'%';const b=document.getElementById(id+'Bar');if(b)b.style.width=n+'%'}
+function render(d){document.getElementById('version').textContent='v'+d.version;document.getElementById('successCount').textContent=d.backup.successful??'0';document.getElementById('latest').textContent='آخرین Backup: '+(d.backup.latest_time||'—');const u=d.telegram_user||{};if(u.first_name)document.getElementById('hello').textContent='سلام '+esc(u.first_name)+' · مدیریت سریع از داخل Telegram';metric('cpu',d.server.cpu);metric('ram',d.server.ram);metric('disk',d.server.disk);document.getElementById('schedulerState').textContent=d.server.scheduler==='active'?'فعال':'متوقف';document.getElementById('nodeState').textContent=d.settings&&d.settings.node?'فعال':'غیرفعال';document.getElementById('updated').textContent='اکنون '+new Date().toLocaleTimeString('fa-IR');const a=d.activity||[];document.getElementById('activityList').innerHTML=a.length?a.slice(0,7).map(x=>'<div class="row"><strong>'+(x.kind==='bad'?'✕':x.kind==='warn'?'!':'✓')+' '+esc(x.message||'رویداد')+'</strong></div>').join(''):'<div class="muted">فعالیتی ثبت نشده.</div>';const list=(d.backup.recent||[]).slice(0,3);document.getElementById('backupList').innerHTML=list.length?list.map(x=>'<div class="row"><div><strong>'+esc(x.name)+'</strong><small>'+esc(x.time)+' · '+esc(x.size)+'</small></div><div style="display:flex;gap:6px;align-items:center">'+(x.download_url?'<a class="download" href="'+esc(x.download_url)+'">دانلود</a>':'')+'<button class="download resend-btn" data-resend="'+esc(x.name)+'">ارسال مجدد</button></div></div>').join(''):'<div class="muted">Backupای ثبت نشده.</div>';document.querySelectorAll('[data-resend]').forEach(btn=>btn.addEventListener('click',async()=>{const name=btn.getAttribute('data-resend'),old=btn.textContent;btn.disabled=true;btn.textContent='در حال ارسال…';try{const r=await api('/api/miniapp/backup-resend',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'name='+encodeURIComponent(name)});render(r.data);if(tg&&tg.HapticFeedback)tg.HapticFeedback.notificationOccurred('success');if(tg&&tg.showAlert)tg.showAlert('Backup دوباره ارسال شد.')}catch(e){if(tg&&tg.showAlert)tg.showAlert(e.message)}finally{btn.disabled=false;btn.textContent=old}}));const health=d.health||[];document.getElementById('services').innerHTML=health.length?health.map(x=>'<div class="row"><div><strong>'+esc(x.name)+'</strong></div><span class="pill '+(x.ok?'':'bad')+'">'+esc(x.detail)+'</span></div>').join(''):'<div class="muted">در حال تکمیل وضعیت سرویس‌ها…</div>';const nt=d.nodes||{};document.getElementById('nodeTrafficTotal').textContent=nt.total!=null?fmtBytes(nt.total):'—';const ni=nt.items||[];document.getElementById('nodeTrafficList').innerHTML=ni.length?ni.map(x=>'<div class="row"><div><strong>📡 '+esc(x.name||'Node')+'</strong><small>'+fmtBytes(x.traffic||0)+'</small></div><span class="pill '+(x.status==='ok'?'':'bad')+'">'+(x.status==='ok'?'فعال':'خطا')+'</span></div>').join(''):'<div class="muted">اطلاعات مصرف Node در دسترس نیست.</div>';const acc=d.account||{};document.getElementById('accountUser').textContent=acc.username||'admin';document.getElementById('twofa').textContent=acc.two_factor_enabled?'فعال':'خاموش';document.getElementById('twofa').classList.toggle('bad',!acc.two_factor_enabled);document.getElementById('recovery').textContent=String(acc.recovery_codes??0)}
+async function boot(){try{const token=new URLSearchParams(location.search).get('launch_token');if(!tg&&!token)throw new Error('این Mini App باید از داخل ربات باز شود.');loadText.textContent='در حال اتصال امن…';const fast=await api('/api/miniapp?fast=1');render(fast);splash.classList.add('hide');api('/api/miniapp').then(render).catch(()=>{});setInterval(()=>api('/api/miniapp?fast=1').then(render).catch(()=>{}),10000)}catch(e){loadText.textContent='اتصال ناموفق';loadError.hidden=false;loadError.innerHTML=esc(e.message)+'<br><button onclick="location.reload()">تلاش دوباره</button>'}}
+document.getElementById('refresh').addEventListener('click',async()=>{try{render(await api('/api/miniapp'))}catch(e){if(tg&&tg.showAlert)tg.showAlert(e.message)}});document.getElementById('manual').addEventListener('click',async function(){const b=this,old=b.innerHTML;b.disabled=true;b.innerHTML='<span class="ico"><svg class="svgico" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></span><b>در حال Backup…</b>';try{const r=await api('/api/miniapp/backup',{method:'POST',body:'{}'});render(r.data);if(tg&&tg.HapticFeedback)tg.HapticFeedback.notificationOccurred('success');if(tg&&tg.showAlert)tg.showAlert('Backup با موفقیت ساخته و ارسال شد.')}catch(e){if(tg&&tg.showAlert)tg.showAlert(e.message)}finally{b.disabled=false;b.innerHTML=old}});
+document.getElementById('changeScheduler').addEventListener('click',async()=>{const v=prompt('Scheduler بر حسب ساعت (مثلاً 0.5 یا 1):','0.5');if(v===null)return;try{render((await api('/api/miniapp/settings/scheduler',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'interval='+encodeURIComponent(v)})).data)}catch(e){if(tg&&tg.showAlert)tg.showAlert(e.message)}});document.getElementById('toggleNode').addEventListener('click',async()=>{try{const current=document.getElementById('nodeState').textContent.startsWith('فعال');render((await api('/api/miniapp/settings/node',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'enabled='+(current?'0':'1')})).data)}catch(e){if(tg&&tg.showAlert)tg.showAlert(e.message)}});boot();})();</script></body></html>'''
+
 def page(title, body, logged=True, notice="", kind="ok"):
     out = _page_base(title, body, logged, notice, kind)
     lang = "fa"
@@ -2369,8 +2697,9 @@ class Handler(BaseHTTPRequestHandler):
         return bool(sid and SESSIONS.get(sid, {}).get("role") == "admin" and time.time() - SESSIONS[sid].get("created", 0) <= ADMIN_SESSION_TTL)
 
     def admin_login_page(self, error=""):
-        notice = '<div class="notice bad">' + html.escape(error) + '</div>' if error else ''
-        body = ('<section class="login"><div class="glass login-card"><div class="login-icon-wrap">' + ui_icon("lock", "card-icon login-icon") + '</div><h2>مدیریت خصوصی</h2><p class="sub">این بخش فقط برای مدیر اصلی است.</p>' + notice + '<form method="post" action="' + ADMIN_PATH + '"><div class="field"><label>نام کاربری ادمین</label><input name="admin_username" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="admin_password" minlength="8" required></div><button class="btn primary full">ورود به مدیریت</button></form></div></section>')
+        notice = f'<div class="notice bad">{html.escape(error)}</div>' if error else ''
+        otp = '<div class="field"><label>کد تأیید دو مرحله‌ای</label><input type="text" name="otp" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" required></div>' if load_cfg().get("two_factor_enabled") else ""
+        body = ('<section class="login"><div class="glass login-card"><div class="login-icon-wrap">' + ui_icon("lock", "card-icon login-icon") + '</div><h2>مدیریت خصوصی</h2><p class="sub">این بخش فقط برای مدیر اصلی است.</p>' + notice + '<form method="post" action="' + ADMIN_PATH + '"><div class="field"><label>نام کاربری ادمین</label><input name="admin_username" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="admin_password" required></div>' + otp + '<button class="btn primary full">ورود به مدیریت</button></form></div></section>')
         return page("Admin Login", body, False)
 
     def redirect(self, path):
@@ -2447,7 +2776,7 @@ class Handler(BaseHTTPRequestHandler):
     def login_page(self, error=""):
         notice = f'<div class="notice bad">{html.escape(error)}</div>' if error else ''
         username = html.escape(canonical_username(load_cfg().get("username", "admin")))
-        body = f'''<section class="login"><div class="glass login-card"><div class="login-icon-wrap">{ui_icon("lock", "card-icon login-icon")}</div><h2 style="font-size:28px;margin:16px 0 8px">ورود به پنل</h2><p class="sub" style="font-size:13px;line-height:1.8">برای ورود، نام کاربری و رمز عبور ادمین را وارد کنید.</p>{notice}<form method="post" action="/login"><div class="field"><label>نام کاربری</label><input type="text" name="username" value="{username}" autocomplete="username" required></div><div class="field"><label>رمز عبور</label><input type="password" name="password" minlength="8" autocomplete="current-password" required></div><button class="btn primary full" type="submit">ورود امن ←</button></form></div></section>'''
+        body = f'''<section class="login"><div class="glass login-card"><div class="login-icon-wrap">{ui_icon("lock", "card-icon login-icon")}</div><h2 style="font-size:28px;margin:16px 0 8px">ورود به پنل</h2><p class="sub" style="font-size:13px;line-height:1.8">برای ورود، نام کاربری و رمز عبور ادمین را وارد کنید.</p>{notice}<form method="post" action="/login"><div class="field"><label>نام کاربری</label><input type="text" name="username" value="{username}" autocomplete="username" required></div><div class="field"><label>رمز عبور</label><input type="password" name="password" autocomplete="current-password" required></div>{('<div class="field"><label>کد تأیید دو مرحله‌ای</label><input type="text" name="otp" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" required><div class="hint">کد Authenticator یا Recovery Code</div></div>' if load_cfg().get('two_factor_enabled') else '')}<button class="btn primary full" type="submit">ورود امن ←</button></form></div></section>'''
         return page("Login", body, False)
 
     def do_GET(self):
@@ -2481,8 +2810,14 @@ class Handler(BaseHTTPRequestHandler):
             payload=json.dumps({"name":"idontPG backup","short_name":"idontPG","start_url":"/","display":"standalone","background_color":"#06070d","theme_color":"#06070d","icons":[{"src":"/static/logo.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]},ensure_ascii=False).encode("utf-8")
             self.send_response(200); self.send_header("Content-Type","application/manifest+json; charset=utf-8"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
         if path == "/sw.js":
-            payload=b"self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>self.clients.claim());"
-            self.send_response(200); self.send_header("Content-Type","application/javascript"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
+            payload=("const CACHE_VERSION='idontpg-miniapp-"+VERSION+"';"
+                     "self.addEventListener('install',e=>{self.skipWaiting();});"
+                     "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE_VERSION).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});"
+                     "self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return; e.respondWith(fetch(e.request,{cache:'no-store'}).catch(()=>caches.match(e.request)));});").encode('utf-8')
+            self.send_response(200); self.send_header("Content-Type", "application/javascript; charset=utf-8"); self.send_header("Cache-Control","no-store, no-cache, must-revalidate"); self.send_header("Pragma","no-cache"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
+        if path == "/miniapp.css":
+            payload=_miniapp_shared_css().encode("utf-8")
+            self.send_response(200); self.send_header("Content-Type", "text/css; charset=utf-8"); self.send_header("Cache-Control","no-store, no-cache, must-revalidate"); self.send_header("Pragma","no-cache"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
         if path == "/static/logo.png":
             self.send_logo(); return
         if path == "/static/pasarguard-logo.png":
@@ -2500,8 +2835,29 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not c.get("password_hash"):
-            body = '''<section class="login"><div class="glass"><div class="login-icon-wrap">{ui_icon("lock", "card-icon login-icon")}</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup"><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" minlength="8" autocomplete="new-password" pattern="(?=.*[a-zA-Z].*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" minlength="8" autocomplete="new-password" pattern="(?=.*[a-zA-Z].*[a-zA-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{8,}" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
+            body = f'''<section class="login"><div class="glass"><div class="login-icon-wrap">{ui_icon("lock", "card-icon login-icon")}</div><h2 style="font-size:28px;margin:16px 0 8px">راه‌اندازی اولیه</h2><p class="sub" style="font-size:13px;line-height:1.8">برای محافظت از پنل، نام کاربری ۵ تا ۳۲ کاراکتر و رمز حداقل ۸ کاراکتر، شامل حداقل ۲ حرف، ۱ عدد و یکی از # @ * بسازید.</p><form method="post" action="/setup" novalidate><div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" autocomplete="username" placeholder="admin" required></div><div class="field"><label>رمز ادمین</label><input type="password" name="password" autocomplete="new-password" required></div><div class="field"><label>تکرار رمز</label><input type="password" name="password_confirm" autocomplete="new-password" required></div><button class="btn primary full">ساخت حساب و ورود</button></form></div></section>'''
             self.send_html(page("First Run", body, False)); return
+        if path == "/2fa-qr":
+            if not self.logged(): self.send_json({"error":"Unauthorized"},401); return
+            secret=str(c.get("two_factor_pending_secret") or "")
+            if not secret: self.send_json({"error":"No pending 2FA setup"},404); return
+            try:
+                from io import BytesIO
+                import qrcode
+                from qrcode.image.svg import SvgPathImage
+                qr=qrcode.QRCode(version=None,box_size=5,border=2); qr.add_data(_totp_uri(c,secret)); qr.make(fit=True)
+                stream=BytesIO(); qr.make_image(image_factory=SvgPathImage).save(stream); data=stream.getvalue()
+                self.send_response(200); self.send_header("Content-Type","image/svg+xml; charset=utf-8"); self.send_header("Content-Length",str(len(data))); self.send_header("Cache-Control","private, no-store"); self.end_headers(); self.wfile.write(data)
+            except Exception as exc: self.send_json({"error":str(exc)},500)
+            return
+        if path == "/2fa-setup":
+            if not self.logged(): self.redirect("/login"); return
+            if c.get("two_factor_enabled"):
+                self.send_html(page("2FA",'<div class="glass"><div class="notice ok">2FA قبلاً فعال شده است.</div><a class="btn primary" href="/account">بازگشت</a></div>')); return
+            secret=c.get("two_factor_pending_secret") or _new_totp_secret(); c["two_factor_pending_secret"]=secret; c["two_factor_pending_created"]=time.time(); save_cfg(c)
+            uri=_totp_uri(c,secret)
+            body='<section class="hero"><h2>🛡️ فعال‌سازی 2FA</h2><p>QR را با Authenticator اسکن کنید یا Secret را دستی وارد کنید، سپس کد ۶ رقمی را تأیید کنید.</p></section><div class="glass wide"><div class="notice"><div style="text-align:center;margin-bottom:14px"><img src="/2fa-qr" alt="2FA QR" style="width:220px;max-width:100%;background:#fff;padding:12px;border-radius:18px"></div>Secret: <code>'+html.escape(secret)+'</code><br><small>'+html.escape(uri)+'</small></div><form method="post" action="/2fa-enable">'+hidden_csrf(self.sid())+'<div class="field"><label>کد ۶ رقمی</label><input name="otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></div><button class="btn primary" type="submit">فعال‌سازی و تأیید</button></form></div>'
+            self.send_html(page("2FA",body)); return
         if path == "/login":
             self.send_html(self.login_page()); return
         if path == ADMIN_PATH:
@@ -2531,8 +2887,62 @@ class Handler(BaseHTTPRequestHandler):
             body+=f'''</div></div><div class="glass wide admin-section"><h3 class="title">➕ دکمه سفارشی</h3><div class="field"><label>نام</label><input name="button_name"></div><div class="field"><label>آیکون</label><input name="button_icon" value="🔗"></div><div class="field"><label>لینک</label><input name="button_url" placeholder="https://..."></div><div class="actions"><button class="btn primary" type="submit" name="save_settings" value="1">💾 ذخیره همه تغییرات</button></div></div></form>'''
             self.send_html(page("Admin", body)); return
 
+        if path == "/miniapp":
+            self.send_html(miniapp_page()); return
+        if path == "/api/miniapp":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth: self.send_json({"error":msg},401); return
+            user=auth.get("user") or {}; uid=int(user.get("id") or 0)
+            query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            fast_mode=query.get("fast",["0"])[0] == "1"
+            payload=_miniapp_payload(uid, fast=fast_mode); payload["telegram_user"]={"id":uid,"first_name":str(user.get("first_name") or "")}
+            self.send_json(payload); return
+        if path == "/miniapp-download":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth: self.send_json({"error":msg},401); return
+            user=auth.get("user") or {}; uid=int(user.get("id") or 0)
+            query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            path_obj=_consume_mini_download_token(query.get("token",[""])[0],uid)
+            if not path_obj: self.send_json({"error":"لینک دانلود منقضی یا نامعتبر است."},404); return
+            try:
+                data=path_obj.read_bytes(); self.send_response(200); self.send_header("Content-Type","application/zip"); self.send_header("Content-Length",str(len(data))); self.send_header("Content-Disposition",f'attachment; filename="{path_obj.name}"'); self.send_header("Cache-Control","private, no-store"); self.end_headers(); self.wfile.write(data)
+            except Exception as exc: self.send_json({"error":str(exc)},500)
+            return
         if not self.logged():
             self.redirect("/login"); return
+
+        if path == "/_legacy-miniapp-download":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth:
+                self.send_json({"error": msg}, 401); return
+            user=auth.get("user") or {}
+            try: uid=int(user.get("id") or 0)
+            except Exception: uid=0
+            query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            path_obj=_consume_mini_download_token(query.get("token", [""])[0], uid)
+            if not path_obj:
+                self.send_json({"error":"لینک دانلود منقضی یا نامعتبر است."}, 404); return
+            try:
+                data=path_obj.read_bytes()
+                self.send_response(200); self.send_header("Content-Type","application/zip"); self.send_header("Content-Length",str(len(data)))
+                self.send_header("Content-Disposition",f'attachment; filename="{path_obj.name}"'); self.send_header("Cache-Control","private, no-store"); self.end_headers(); self.wfile.write(data)
+            except Exception as exc:
+                self.send_json({"error":str(exc)},500)
+            return
+        if path == "/miniapp":
+            self.send_html(miniapp_page()); return
+        if path == "/api/miniapp":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth:
+                self.send_json({"error": msg}, 401); return
+            user=auth.get("user") or {}
+            try: uid=int(user.get("id") or 0)
+            except Exception: uid=0
+            query=urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            fast_mode=query.get("fast",["0"])[0] == "1"
+            payload=_miniapp_payload(uid, fast=fast_mode)
+            payload["telegram_user"]={"id":uid,"first_name":str(user.get("first_name") or "")}
+            self.send_json(payload); return
 
         if path == "/api/resources":
             self.send_json(get_server_resource_usage()); return
@@ -2649,11 +3059,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
         if path == "/account":
-            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" minlength="8" maxlength="128" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button></div></form><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🔐 آخرین ورود</h3><p class="sub">آخرین ورود موفق</p></div></div><div class="meta"><div class="meta-row"><span>IP</span><strong>{html.escape(str(c.get("last_login",{}).get("ip") or "—"))}</strong></div><div class="meta-row"><span>زمان</span><strong>{html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(c.get("last_login",{}).get("time",0) or 0)))) if c.get("last_login",{}).get("time") else "—"}</strong></div><div class="meta-row"><span>دستگاه / مرورگر</span><strong>{html.escape(str(c.get("last_login",{}).get("device") or "—"))}</strong></div></div></div></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("account", "hero-icon")} <span class="gradient">حساب کاربری</span></h2><p>نام کاربری و رمز ورود را مدیریت کنید.</p></section><div class="glass wide"><form method="post" action="/account">{hidden_csrf(self.sid())}<div class="field"><label>نام کاربری</label><input type="text" name="username" minlength="5" maxlength="32" pattern="[A-Za-z0-9-]+" value="{html.escape(canonical_username(c.get("username", "admin")))}" autocomplete="username" required><div class="hint">فقط حروف انگلیسی، عدد و خط تیره؛ ۵ تا ۳۲ کاراکتر.</div></div><div class="field"><label>رمز عبور جدید</label><input type="password" name="password" autocomplete="new-password"><div class="hint">برای تغییر رمز، حداقل ۸ کاراکتر وارد کنید. اگر قصد تغییر رمز ندارید، این بخش را خالی بگذارید.</div></div><div class="field"><label>تکرار رمز جدید</label><input type="password" name="password_confirm" autocomplete="new-password"></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تغییرات</button></div></form><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🛡️ تأیید دو مرحله‌ای</h3><p class="sub">اختیاری؛ برای ورود به Web Panel و Admin Panel.</p></div></div>{('<div class="notice ok">2FA فعال است · '+str(len(c.get("two_factor_recovery_codes") or []))+' Recovery Code باقی مانده.</div><form method="post" action="/2fa-disable">'+hidden_csrf(self.sid())+'<div class="field"><label>رمز عبور فعلی</label><input type="password" name="password" autocomplete="current-password" required></div><button class="btn danger" type="submit">غیرفعال کردن 2FA</button></form>' if c.get('two_factor_enabled') else '<div class="notice">2FA فعال نیست.</div><a class="btn primary" href="/2fa-setup">فعال‌سازی 2FA</a>')}</div><div class="glass" style="margin-top:14px"><div class="card-head"><div><h3 class="title">🔐 آخرین ورود</h3><p class="sub">آخرین ورود موفق</p></div></div><div class="meta"><div class="meta-row"><span>IP</span><strong>{html.escape(str(c.get("last_login",{}).get("ip") or "—"))}</strong></div><div class="meta-row"><span>زمان</span><strong>{html.escape(time.strftime("%Y-%m-%d %H:%M:%S",time.localtime(float(c.get("last_login",{}).get("time",0) or 0)))) if c.get("last_login",{}).get("time") else "—"}</strong></div><div class="meta-row"><span>دستگاه / مرورگر</span><strong>{html.escape(str(c.get("last_login",{}).get("device") or "—"))}</strong></div></div></div></div>'''
             self.send_html(page("Account", body)); return
 
         if path == "/telegram":
-            body = f'''<section class="hero"><h2>{ui_icon("telegram", "hero-icon")} <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><label class="toggle"><span>حذف خودکار پیام Backup تلگرام</span><input type="checkbox" name="telegram_auto_delete" {'checked' if c.get('telegram_auto_delete') else ''} onchange="if(this.checked&&!confirm('آیا مطمئن هستید حذف خودکار پیام‌های Backup تلگرام فعال شود؟ پنج Backup اخیر محفوظ می‌مانند.'))this.checked=false"></label><div class="field"><label>زمان پاکسازی (ساعت)</label><input name="telegram_auto_delete_hours" type="number" min="0.5" max="48" step="0.5" value="{html.escape(str(c.get('telegram_auto_delete_hours') or 0))}"><div class="hint">۰٫۵ تا ۴۸ ساعت. پنج پیام Backup اخیر همیشه محفوظ می‌مانند و فایل‌های Web Panel حذف نمی‌شوند.</div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button><a class="btn" href="/test">{ui_icon("test", "inline-icon")} تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
+            body = f'''<section class="hero"><h2>{ui_icon("telegram", "hero-icon")} <span class="gradient">بکاپ تلگرام</span></h2><p>اطلاعات ربات، مقصد، Topic، پروکسی و زمان‌بندی را تنظیم کنید؛ سپس Scheduler را شروع کنید.</p></section><div class="glass wide"><form method="post" action="/telegram">{hidden_csrf(self.sid())}<div class="grid"><div class="field" style="grid-column:span 6"><label>Telegram Bot Token</label><input name="token" value="{html.escape(c.get('token',''))}" placeholder="123456:ABC..." required><div class="hint">توکن BotFather را وارد کنید.</div></div><div class="field" style="grid-column:span 6"><label>Chat ID</label><input name="chat" value="{html.escape(c.get('chat',''))}" placeholder="-1001234567890" required></div><div class="field" style="grid-column:span 6"><label>Topic / Thread ID</label><input name="topic" value="{html.escape(c.get('topic',''))}" placeholder="12345"><div class="hint">شماره Topic را وارد کنید؛ لینک Topic تلگرام هم قابل قبول است.</div></div><div class="field" style="grid-column:span 6"><label>Telegram Proxy</label><input name="proxy" value="{html.escape(c.get('proxy',''))}" placeholder="socks5://127.0.0.1:1080"><div class="hint">اختیاری. اگر Proxy ندارید خالی بگذارید.</div></div></div><div class="glass" style="margin:14px 0;padding:16px;border:1px solid var(--line)"><div class="card-head"><div><h3 class="title">👥 مدیران ربات</h3><p class="sub">حداکثر ۳ Telegram ID می‌توانند به ربات مدیریت Backup دسترسی داشته باشند. فقط همین IDها مجاز هستند.</p></div></div><div class="grid"><div class="field" style="grid-column:span 4"><label>Admin ID #1</label><input name="telegram_admin_1" inputmode="numeric" placeholder="123456789" value="{html.escape(str((c.get('telegram_admin_ids') or [])[0] if len(c.get('telegram_admin_ids') or []) > 0 else ''))}"></div><div class="field" style="grid-column:span 4"><label>Admin ID #2</label><input name="telegram_admin_2" inputmode="numeric" placeholder="987654321" value="{html.escape(str((c.get('telegram_admin_ids') or [])[1] if len(c.get('telegram_admin_ids') or []) > 1 else ''))}"></div><div class="field" style="grid-column:span 4"><label>Admin ID #3</label><input name="telegram_admin_3" inputmode="numeric" placeholder="555666777" value="{html.escape(str((c.get('telegram_admin_ids') or [])[2] if len(c.get('telegram_admin_ids') or []) > 2 else ''))}"></div></div><div class="hint">Telegram ID را فقط به‌صورت عدد وارد کنید. این بخش مستقل از Chat ID مقصد Backup است.</div></div><label class="toggle"><span>حذف خودکار پیام Backup تلگرام</span><input type="checkbox" name="telegram_auto_delete" {'checked' if c.get('telegram_auto_delete') else ''} onchange="if(this.checked&&!confirm('آیا مطمئن هستید حذف خودکار پیام‌های Backup تلگرام فعال شود؟ پنج Backup اخیر محفوظ می‌مانند.'))this.checked=false"></label><div class="field"><label>زمان پاکسازی (ساعت)</label><input name="telegram_auto_delete_hours" type="number" min="0.5" max="48" step="0.5" value="{html.escape(str(c.get('telegram_auto_delete_hours') or 0))}"><div class="hint">۰٫۵ تا ۴۸ ساعت. پنج پیام Backup اخیر همیشه محفوظ می‌مانند و فایل‌های Web Panel حذف نمی‌شوند.</div></div><div class="actions"><button class="btn primary" type="submit">{ui_icon("settings", "inline-icon")} ذخیره تنظیمات</button><a class="btn" href="/test">{ui_icon("test", "inline-icon")} تست اتصال</a><a class="btn" href="/">← برگشت</a></div></form></div>'''
             self.send_html(page("Telegram Backup", body)); return
 
         if path == "/backup-settings":
@@ -2690,6 +3100,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        if path in {"/api/miniapp/settings/scheduler", "/api/miniapp/settings/node"}:
+            auth,msg=_miniapp_request_auth(self)
+            if not auth: self.send_json({"error":msg},401); return
+            data=self.form()
+            c=load_cfg()
+            if path.endswith("/scheduler"):
+                try: interval=float(data.get("interval","0"))
+                except Exception: interval=0
+                if not 0.5<=interval<=720: self.send_json({"error":"Scheduler باید بین 0.5 تا 720 ساعت باشد."},400); return
+                c["interval"]=str(interval).rstrip("0").rstrip(".") if interval%1 else str(int(interval)); save_cfg(c)
+                try: scheduler_service("restart")
+                except Exception: pass
+            else:
+                c["node"]=str(data.get("enabled","0")).lower() in {"1","true","on","yes"}; save_cfg(c)
+            uid=int((auth.get("user") or {}).get("id") or 0); self.send_json({"ok":True,"data":_miniapp_payload(uid)}); return
+        if path == "/api/miniapp/backup-resend":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth:
+                self.send_json({"error": msg}, 401); return
+            try:
+                data = self.form()
+                requested = Path(str(data.get("name") or "")).name
+                target = next((item for item, _, _ in _backup_archives() if item.name == requested), None)
+                if not target:
+                    self.send_json({"error": "Backup روی سرور پیدا نشد."}, 404); return
+                c2 = load_cfg(); core = load_core()
+                ok, detail = send_archive(core, target, c2, f"idontPG-backup · Resend · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                if not ok:
+                    self.send_json({"error": detail or "ارسال مجدد ناموفق بود."}, 500); return
+                user = auth.get("user") or {}
+                try: uid = int(user.get("id") or 0)
+                except Exception: uid = 0
+                self.send_json({"ok": True, "message": detail or "Backup دوباره ارسال شد.", "data": _miniapp_payload(uid)})
+            except Exception as exc:
+                self.send_json({"error": str(exc)[-800:]}, 500)
+            return
+        if path == "/api/miniapp/backup":
+            auth, msg = _miniapp_request_auth(self)
+            if not auth:
+                self.send_json({"error": msg}, 401); return
+            try:
+                user=auth.get("user",{}) or {}
+                uid=str(user.get("id") or "telegram")
+                first=str(user.get("first_name") or "").strip()
+                ctx={"username":f"telegram:{uid}"[:80],"ip":self.client_address[0] if self.client_address else "telegram","device":f"Telegram Mini App{(' · '+first) if first else ''}"[:180]}
+                ok, detail=make_backup(send=True,audit_context=ctx)
+                if not ok:
+                    self.send_json({"error":detail or "Backup failed."},500); return
+                self.send_json({"ok":True,"message":detail,"data":_miniapp_payload(int(uid))})
+            except Exception as exc:
+                self.send_json({"error":str(exc)[-800:]},500)
+            return
+        path = urllib.parse.urlparse(self.path).path
         if path != "/" and path.endswith("/"):
             path = path.rstrip("/")
         c = load_cfg()
@@ -2714,9 +3177,27 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(c)
             self.redirect("/login"); return
 
+        if path == "/2fa-enable":
+            if not self.logged(): self.redirect("/login"); return
+            if not self.require_csrf(data): self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
+            secret=str(c.get("two_factor_pending_secret") or ""); created=float(c.get("two_factor_pending_created",0) or 0)
+            if not secret or time.time()-created>900 or not _totp_valid(secret,data.get("otp","")):
+                self.send_html(page("2FA",'<div class="glass"><div class="notice bad">کد 2FA اشتباه یا منقضی شده است.</div><a class="btn" href="/2fa-setup">تلاش دوباره</a></div>'),400); return
+            codes=_recovery_codes(); c.update({"two_factor_enabled":True,"two_factor_secret":secret,"two_factor_pending_secret":"","two_factor_pending_created":0,"two_factor_recovery_codes":codes}); save_cfg(c)
+            self.send_html(page("2FA",'<div class="glass"><div class="notice ok">2FA فعال شد.</div><p>Recovery Codeها را در جای امن ذخیره کنید:</p><pre>'+"\n".join(codes)+'</pre><a class="btn primary" href="/account">بازگشت</a></div>')); return
+        if path == "/2fa-disable":
+            if not self.logged(): self.redirect("/login"); return
+            if not self.require_csrf(data): self.send_html(page("Security",'<div class="glass"><div class="notice bad">درخواست نامعتبر است.</div></div>'),403); return
+            if not check_password(data.get("password",""),c): self.send_html(page("2FA",'<div class="glass"><div class="notice bad">رمز عبور فعلی اشتباه است.</div></div>'),403); return
+            c.update({"two_factor_enabled":False,"two_factor_secret":"","two_factor_pending_secret":"","two_factor_pending_created":0,"two_factor_recovery_codes":[]}); save_cfg(c); self.send_html(page("2FA",'<div class="glass"><div class="notice ok">2FA غیرفعال شد.</div><a class="btn primary" href="/account">بازگشت</a></div>')); return
         if path == "/login":
             username_ok = hmac.compare_digest(data.get("username", "").strip(), canonical_username(c.get("username", "admin")))
-            if username_ok and check_password(data.get("password", ""), c):
+            otp_ok=True
+            if c.get("two_factor_enabled"):
+                otp=data.get("otp",""); otp_ok=_totp_valid(c.get("two_factor_secret",""),otp)
+                if not otp_ok: otp_ok=_consume_recovery_code(c,otp)
+                if otp_ok: save_cfg(c)
+            if username_ok and check_password(data.get("password", ""), c) and otp_ok:
                 sid = secrets.token_urlsafe(32)
                 login_ip=self.client_address[0] if self.client_address else "unknown"
                 login_time=_record_login(login_ip,canonical_username(c.get("username","admin")),"user",_login_device(self.headers.get("User-Agent","")))
@@ -2739,6 +3220,9 @@ class Handler(BaseHTTPRequestHandler):
                 ip=self.client_address[0] if self.client_address else "unknown"; now=time.time(); recent=[x for x in ADMIN_LOGIN_ATTEMPTS.get(ip,[]) if now-x<900]
                 if len(recent)>=5: self.send_html(self.admin_login_page("تلاش زیاد؛ ۱۵ دقیقه دیگر دوباره امتحان کنید."),429); return
                 ok=hmac.compare_digest(data.get("admin_username","").strip(),canonical_username(c.get("username","admin"))) and check_password(data.get("admin_password",""),c)
+                if ok and c.get("two_factor_enabled"):
+                    otp=data.get("otp",""); ok=_totp_valid(c.get("two_factor_secret",""),otp) or _consume_recovery_code(c,otp)
+                    if ok: save_cfg(c)
                 if not ok:
                     recent.append(now); ADMIN_LOGIN_ATTEMPTS[ip]=recent; _record_activity("Admin login failed", "bad", data.get("admin_username", "unknown"), ip, _login_device(self.headers.get("User-Agent", "")), "admin_login_failed"); self.send_html(self.admin_login_page("نام کاربری یا رمز ادمین اشتباه است."),401); return
                 ADMIN_LOGIN_ATTEMPTS.pop(ip,None); login_time=_record_login(ip,canonical_username(c.get("username","admin")),"admin",_login_device(self.headers.get("User-Agent",""))); c["last_login"]={"time":login_time,"ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}; save_cfg(c); _record_activity(f"ورود مدیر از {ip}","ok",canonical_username(c.get("username","admin")),ip,_login_device(self.headers.get("User-Agent","")),"admin_login_success"); _notify_login_telegram(c,ip,canonical_username(c.get("username","admin"))); sid=secrets.token_urlsafe(32); SESSIONS[sid]={"created":time.time(),"csrf":secrets.token_urlsafe(24),"role":"admin","username":canonical_username(c.get("username","admin")),"ip":ip,"device":_login_device(self.headers.get("User-Agent","")),"login_notice":{"text":"ورود مدیر با موفقیت انجام شد","ip":ip,"device":_login_device(self.headers.get("User-Agent",""))}}
@@ -2788,13 +3272,40 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_html(page("Account", '<div class="glass"><div class="notice bad">تکرار رمز جدید با رمز عبور یکسان نیست.</div><a class="btn" href="/account">تلاش دوباره</a></div>'), 400); return
                 salt, digest = hash_password(pw)
                 c.update({"password_salt": salt, "password_hash": digest})
-            save_cfg(c)
+                save_cfg(c)
+                _invalidate_user_sessions(except_sid=self.sid())
+                c=load_cfg()
             _record_activity("Account settings changed", "ok", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "account_settings")
             self.send_html(page("Account", '<div class="glass"><div class="notice ok">تنظیمات حساب با موفقیت ذخیره شد.</div><div class="actions"><a class="btn primary" href="/">داشبورد</a><a class="btn" href="/account">حساب کاربری</a></div></div>')); return
 
 
         if path == "/telegram":
-            c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip(), "telegram_auto_delete": data.get("telegram_auto_delete")=="on"})
+            # Keep the previous allowlist so we can notify only newly-added admins.
+            previous_admin_ids=[]
+            for value in (c.get("telegram_admin_ids") or []):
+                try:
+                    previous_admin_ids.append(int(str(value).strip()))
+                except Exception:
+                    pass
+            previous_admin_ids = sorted(set(previous_admin_ids))[:3]
+
+            admin_ids=[]
+            invalid_admin=False
+            for key in ("telegram_admin_1", "telegram_admin_2", "telegram_admin_3"):
+                raw=str(data.get(key, "")).strip()
+                if not raw:
+                    continue
+                if not re.fullmatch(r"-?\d{1,30}", raw):
+                    invalid_admin=True
+                    break
+                try:
+                    admin_ids.append(int(raw))
+                except Exception:
+                    invalid_admin=True
+                    break
+            if invalid_admin or len(set(admin_ids)) != len(admin_ids) or len(admin_ids) > 3:
+                self.send_html(page("Telegram", '<div class="glass"><div class="notice bad">Telegram ID مدیران نامعتبر است. حداکثر ۳ شناسه عددیِ متفاوت وارد کنید.</div><a class="btn" href="/telegram">برگشت</a></div>'), 400); return
+            c.update({"token": data.get("token", "").strip(), "chat": data.get("chat", "").strip(), "topic": data.get("topic", "").strip(), "proxy": data.get("proxy", "").strip(), "telegram_auto_delete": data.get("telegram_auto_delete")=="on", "telegram_admin_ids": admin_ids})
             try:
                 h=float(data.get("telegram_auto_delete_hours") or 0); c["telegram_auto_delete_hours"]=0.0 if h==0 else max(0.5,min(48,h))
             except Exception: c["telegram_auto_delete_hours"]=0.0
@@ -2802,7 +3313,64 @@ class Handler(BaseHTTPRequestHandler):
             if not c["telegram_auto_delete"]: c["telegram_auto_delete_hours"]=0.0
             save_cfg(c)
             _record_activity("Telegram settings changed", "ok", canonical_username(c.get("username","admin")), self.client_address[0] if self.client_address else "unknown", _login_device(self.headers.get("User-Agent","")), "telegram_settings")
-            self.send_html(page("Telegram", '<div class="glass"><div class="notice ok">تنظیمات Telegram با موفقیت ذخیره شد.</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
+
+            # Keep newly-added admins pending until their welcome message is delivered.
+            pending_welcome=[]
+            for value in (c.get("telegram_admin_welcome_pending") or []):
+                try:
+                    pending_welcome.append(int(str(value).strip()))
+                except Exception:
+                    pass
+            pending_welcome=sorted(set(pending_welcome))
+            new_admin_ids = [x for x in admin_ids if x not in previous_admin_ids]
+            pending_welcome = sorted(set(pending_welcome + new_admin_ids))[:3]
+            c["telegram_admin_welcome_pending"] = pending_welcome
+            save_cfg(c)
+
+            # Notify each newly-added Telegram admin immediately after registration.
+            # Telegram only allows a bot to initiate a private chat after the user has
+            # started the bot at least once; failures are reported in the panel instead
+            # of silently pretending the notification was delivered.
+            admin_notice_results=[]
+            if new_admin_ids and c.get("token"):
+                admin_notice = (
+                    "👑 <b>تبریک!</b>\n\n"
+                    "کاربر گرامی، شما با موفقیت به عنوان <b>ادمین idontPG-backup</b> ثبت شدید.\n\n"
+                    "🛡️ اکنون دسترسی مدیریت Backup این سرور را از طریق ربات Telegram دارید.\n"
+                    "برای مشاهده منوی مدیریت، /start را ارسال کنید."
+                )
+                for admin_id in new_admin_ids:
+                    try:
+                        ok, msg = telegram_request(
+                            c["token"], "sendMessage",
+                            {"chat_id": str(admin_id), "text": admin_notice, "parse_mode": "HTML"},
+                            c.get("proxy") or None, 20
+                        )
+                        delivered_ok=bool(ok)
+                        admin_notice_results.append((admin_id, delivered_ok, str(msg or "OK")))
+                        if delivered_ok:
+                            pending_welcome=[x for x in pending_welcome if x != admin_id]
+                    except Exception as e:
+                        admin_notice_results.append((admin_id, False, str(e)))
+
+            c["telegram_admin_welcome_pending"] = sorted(set(pending_welcome))[:3]
+            save_cfg(c)
+
+            if admin_notice_results:
+                delivered=sum(1 for _, ok, _ in admin_notice_results if ok)
+                failed=[f"{aid}: {msg}" for aid, ok, msg in admin_notice_results if not ok]
+                if failed:
+                    notice = (f'تنظیمات Telegram ذخیره شد. پیام فعال‌سازی برای {delivered} ادمین ارسال شد؛ '
+                              f'برای {len(failed)} ادمین ارسال نشد. ممکن است کاربر هنوز /start را برای Bot نفرستاده باشد.<br>'
+                              f'<span class="empty">{html.escape(" | ".join(failed))}</span>')
+                    kind="warn"
+                else:
+                    notice = f'تنظیمات Telegram ذخیره شد و پیام «ادمین شدید» برای {delivered} ادمین جدید ارسال شد.'
+                    kind="ok"
+            else:
+                notice = 'تنظیمات Telegram با موفقیت ذخیره شد.'
+                kind="ok"
+            self.send_html(page("Telegram", f'<div class="glass"><div class="notice {kind}">{notice}</div><a class="btn" href="/telegram">برگشت به Telegram</a></div>')); return
 
         if path == "/test":
             ok, msg = telegram_test(c)
@@ -2880,6 +3448,90 @@ class Handler(BaseHTTPRequestHandler):
         self.send_html(page("404", '<div class="glass"><h2>404</h2></div>'), 404)
 
 
+def _ssl_certificate_info():
+    """Return (domain, cert_path, expiry_epoch) for the configured Web Panel TLS cert."""
+    env_path = Path("/etc/default/idontpg-backup-web")
+    env = {}
+    try:
+        if env_path.is_file():
+            for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if "=" not in line or line.lstrip().startswith("#"):
+                    continue
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    cert = env.get("IDONTPG_SSL_CERTFILE") or os.environ.get("IDONTPG_SSL_CERTFILE", "")
+    domain = env.get("IDONTPG_SSL_DOMAIN", "") or ""
+    if not cert or not os.path.isfile(cert):
+        return "", cert, None
+    try:
+        info = ssl._ssl._test_decode_cert(cert)
+        not_after = info.get("notAfter")
+        if not not_after:
+            return domain, cert, None
+        # OpenSSL's Python representation is e.g. 'Jun 15 12:00:00 2027 GMT'.
+        expiry = time.mktime(time.strptime(not_after, "%b %d %H:%M:%S %Y %Z"))
+        return domain, cert, expiry
+    except Exception:
+        return domain, cert, None
+
+
+def _notify_ssl_expiry(c):
+    """Warn Telegram admins once when the certificate reaches <=5 days remaining."""
+    if not c.get("token"):
+        return
+    now = time.time()
+    try:
+        last_check = float(c.get("ssl_monitor_last_check") or 0)
+    except Exception:
+        last_check = 0
+    if now - last_check < 3600:
+        return
+    c["ssl_monitor_last_check"] = now
+    domain, cert, expiry = _ssl_certificate_info()
+    if not expiry:
+        save_cfg(c)
+        return
+    remaining = expiry - now
+    if remaining > 5 * 86400:
+        save_cfg(c)
+        return
+    days = max(0, int(remaining // 86400))
+    hours = max(0, int((remaining % 86400) // 3600))
+    expiry_key = f"{domain}|{int(expiry)}"
+    if c.get("ssl_warning_last") == expiry_key:
+        save_cfg(c)
+        return
+    recipients = []
+    for value in c.get("telegram_admin_ids") or []:
+        try:
+            recipients.append(str(int(str(value).strip())))
+        except Exception:
+            pass
+    recipients = list(dict.fromkeys(recipients))[:3]
+    if not recipients and c.get("chat"):
+        recipients = [str(c.get("chat"))]
+    if not recipients:
+        save_cfg(c)
+        return
+    level = "🔴" if remaining <= 5 * 86400 else "🟡"
+    if remaining <= 0:
+        message = f"{level} <b>SSL Certificate Expired</b>\n\n🌐 Domain: <code>{html.escape(domain or 'unknown')}</code>\n📜 Certificate: <code>{html.escape(cert)}</code>\n\n⚠️ گواهی SSL منقضی شده است."
+    else:
+        message = f"{level} <b>SSL Certificate Warning</b>\n\n🌐 Domain: <code>{html.escape(domain or 'unknown')}</code>\n⏳ زمان باقی‌مانده: <b>{days} روز و {hours} ساعت</b>\n📅 Expiry: <code>{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(expiry))}</code>\n\n⚠️ تمدید خودکار را بررسی کنید."
+    sent = False
+    for recipient in recipients:
+        try:
+            ok, _ = telegram_request(c["token"], "sendMessage", {"chat_id": recipient, "text": message, "parse_mode": "HTML"}, c.get("proxy") or None, 20)
+            sent = sent or bool(ok)
+        except Exception:
+            pass
+    if sent:
+        c["ssl_warning_last"] = expiry_key
+    save_cfg(c)
+
+
 def cleanup_telegram_messages():
     cfg=load_cfg()
     if not cfg.get("telegram_auto_delete") or not cfg.get("token"): return
@@ -2904,6 +3556,8 @@ def worker():
         try: cleanup_telegram_messages()
         except Exception: pass
         c=load_cfg()
+        try: _notify_ssl_expiry(c)
+        except Exception: pass
         try: interval=max(0.5,float(c.get("interval",24))) * 3600
         except Exception: interval=24*3600
         if c.get("token") and c.get("chat") and (time.time()-last_backup)>=interval:
@@ -2925,8 +3579,17 @@ def main():
     if args.worker:
         worker(); return
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    if SCHEME == "https":
+        if not SSL_CERTFILE or not SSL_KEYFILE:
+            raise RuntimeError("HTTPS mode requires IDONTPG_SSL_CERTFILE and IDONTPG_SSL_KEYFILE")
+        if not os.path.isfile(SSL_CERTFILE) or not os.path.isfile(SSL_KEYFILE):
+            raise RuntimeError("HTTPS certificate/key file not found")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(SSL_CERTFILE, SSL_KEYFILE)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
     _record_activity("Scheduler started" if scheduler_status()=="active" else "Web panel started", "ok", "system", "localhost", "Service", "scheduler_start" if scheduler_status()=="active" else "activity")
-    print(f"{APP} Web Panel v{VERSION} listening on http://{HOST}:{PORT}", flush=True)
+    print(f"{APP} Web Panel v{VERSION} listening on {SCHEME}://{HOST}:{PORT}", flush=True)
     server.serve_forever()
 
 

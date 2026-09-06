@@ -38,7 +38,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.2-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -177,7 +177,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.1
+Available in v5.8.2
 
 قابلیت‌های پیشرفته زیر در نسخه‌های آینده اضافه خواهند شد:
 
@@ -244,7 +244,7 @@ A complete tool for managing backups, restoring data, and migrating
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.2-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -254,6 +254,13 @@ A complete tool for managing backups, restoring data, and migrating
 ---
 
 # 🌐 Web Panel
+
+### حالت دسترسی Web Panel
+هنگام نصب، Web Panel دو حالت دارد:
+- **HTTP + IP:** روی `http://SERVER_IP:5000`
+- **HTTPS + Domain:** دامنه و DNS قبل از صدور گواهی بررسی می‌شوند، یک پورت آزاد جدا از `5000` (از `5443` به بعد) انتخاب می‌شود و گواهی **Let's Encrypt** با Certbot به‌صورت خودکار گرفته و تمدید می‌شود.
+
+> برای حالت HTTPS، دامنه باید به سرور اشاره کند و TCP پورت `80` برای اعتبارسنجی Let's Encrypt در دسترس باشد. اگر CDN/Cloudflare فعال است، بررسی مستقیم IP ممکن است متفاوت باشد و نصب از شما تأیید می‌گیرد.
 
 ## 🖥️ Professional Backup Management & Monitoring
 
@@ -346,8 +353,8 @@ sending backups to Telegram, and restoring them on the destination server.
 | 📤 Manual Backup | Manually send backups |
 | 🤖 Telegram Bot Test | Send a test message to the Telegram bot |
 | ♻️ Restore | Web Panel & PasarGuard Restore Center |
-| 🚚 Migration | Available in v5.8.1 |
-| 🔄 Transfer | Available in v5.8.1 |
+| 🚚 Migration | Available in v5.8.2 |
+| 🔄 Transfer | Available in v5.8.2 |
 
 ---
 
@@ -396,7 +403,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.1
+Available in v5.8.2
 
 The following advanced features will be added in future versions:
 
@@ -467,7 +474,7 @@ https://docs.mypanelhome.ir
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-v5.8.1-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
+[![Version](https://img.shields.io/badge/version-v5.8.2-7c3aed?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://github.com/durwinam/idontPG-backup)
@@ -565,8 +572,8 @@ PasarGuard и PG-Node, созданный для упрощения процес
 | 📤 Manual Backup | Ручная отправка Backup |
 | 🤖 Telegram Bot Test | Отправка тестового сообщения Telegram-боту |
 | ♻️ Restore | Web Panel & PasarGuard Restore |
-| 🚚 Migration | Доступно в v5.8.1 |
-| 🔄 Transfer | Доступно в v5.8.1 |
+| 🚚 Migration | Доступно в v5.8.2 |
+| 🔄 Transfer | Доступно в v5.8.2 |
 
 # 🗄️ Поддержка движков баз данных
 
@@ -612,7 +619,7 @@ PasarGuard
 
 ---
 
-Доступно в v5.8.1
+Доступно в v5.8.2
 
 Следующие расширенные возможности будут добавлены в будущих версиях:
 
@@ -648,3 +655,21 @@ https://docs.mypanelhome.ir
 Лёгкий · Быстрый · Безопасный · Надёжный
 
 </div>
+
+## Telegram Management Bot — v5.8.2
+
+The project can install an optional **admin-only Telegram Management Bot**. Access is controlled by an explicit Telegram user-ID allowlist; non-authorized users cannot use the management menu or trigger Backup operations.
+
+The bot provides:
+
+- 💾 Latest Backup
+- 📊 Recent activities
+- 🖥 System/Web Panel sessions (the Bot API cannot read a user's private Telegram device sessions)
+- 🗑 Telegram Auto Delete status
+- 🚀 Manual Backup
+- 📈 Server status
+- 🔔 Notifications
+- ⚙️ Settings summary
+- 🌐 Telegram Mini App launcher when the Web Panel has an HTTPS URL
+
+The main keyboard uses Telegram's current `primary`, `success`, and `danger` button styles where supported.

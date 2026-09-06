@@ -39,6 +39,13 @@ A complete tool for managing backups, restoring data, and migrating
 
 # 🌐 Web Panel
 
+### Web Panel access modes
+During installation, choose one of two modes:
+- **HTTP + IP:** `http://SERVER_IP:5000`
+- **HTTPS + Domain:** DNS is checked before issuance, a free port separate from `5000` (starting at `5443`) is selected, and a **Let's Encrypt** certificate is issued and renewed automatically with Certbot.
+
+> HTTPS requires the domain to resolve correctly and TCP port `80` to be reachable for Let's Encrypt HTTP validation. With a CDN/Cloudflare proxy, the installer warns when the resolved IP differs and asks whether to continue.
+
 ## 🖥️ Professional Backup Management & Monitoring
 
 idontPG-backup includes a lightweight and professional web panel for managing and monitoring backups.
@@ -130,8 +137,8 @@ sending backups to Telegram, and restoring them on the destination server.
 | 📤 Manual Backup | Manually send backups |
 | 🤖 Telegram Bot Test | Send a test message to the Telegram bot |
 | ♻️ Restore | Web Panel & PasarGuard Restore Center |
-| 🚚 Migration | Available in v5.8.1 |
-| 🔄 Transfer | Available in v5.8.1 |
+| 🚚 Migration | Available in v5.8.2 |
+| 🔄 Transfer | Available in v5.8.2 |
 
 ---
 
@@ -180,7 +187,7 @@ PasarGuard
 
 ---
 
-Available in v5.8.1
+Available in v5.8.2
 
 The following advanced features will be added in future versions:
 
@@ -211,3 +218,11 @@ For contact and support:
 **Lightweight · Fast · Secure · Reliable**
 
 </div>
+
+## Telegram Management Bot — v5.8.2
+
+An optional **admin-only Telegram Management Bot** can be installed with the project. Access is enforced by a Telegram user-ID allowlist. Unauthorized users cannot access the management menu or trigger Backup operations.
+
+Features include Latest Backup, Recent Activities, System/Web Panel Sessions, Auto Delete status, Manual Backup, Server Status, Notifications, Settings summary, and an HTTPS Mini App launcher.
+
+The keyboard uses Telegram's current `primary`, `success`, and `danger` button styles where supported.
